@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type ClusterInput,
   type Merge,
+  collectMembers,
   cutTree,
   distanceMatrix,
   heightRange,
@@ -228,6 +229,36 @@ describe("cutTree", () => {
 
   it("handles an empty set", () => {
     expect(cutTree([], 0, 0.5)).toEqual([]);
+  });
+});
+
+describe("precomputed members", () => {
+  const angles = [0, 2, 40, 42, 120, 122, 250];
+  const items = angles.map((a) => plain(onCircle(a)));
+  const n = items.length;
+  const merges = linkage(distanceMatrix(items), n);
+  const members = collectMembers(merges, n);
+
+  it("covers every node, leaves first", () => {
+    expect(members).toHaveLength(n + merges.length);
+    for (let i = 0; i < n; i++) expect(members[i]).toEqual([i]);
+    expect(members[members.length - 1]).toHaveLength(n);
+  });
+
+  it("gives cutTree the same answer as recomputing", () => {
+    for (const threshold of [0, 0.1, 0.5, 2]) {
+      expect(cutTree(merges, n, threshold, members)).toEqual(
+        cutTree(merges, n, threshold),
+      );
+    }
+  });
+
+  it("gives subCut the same answer as recomputing", () => {
+    const broad = cutTree(merges, n, 0.9).find((c) => c.leaves.length > 3)!;
+    const threshold = subCutThreshold(merges, n, broad.node, 0.6);
+    expect(subCut(merges, n, broad.node, threshold, members)).toEqual(
+      subCut(merges, n, broad.node, threshold),
+    );
   });
 });
 

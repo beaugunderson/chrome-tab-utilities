@@ -8,6 +8,7 @@ import {
   type CutCluster,
   type ClusterInput,
   type Merge,
+  collectMembers,
   cutTree,
   distanceMatrix,
   dot,
@@ -70,8 +71,12 @@ interface State {
   tabs: TriageTab[];
   merges: Merge[];
   heights: number[];
-  /** Node ids the user has drilled into. */
-  expanded: Set<number>;
+  /**
+   * Node ids the user has folded shut. Tracking collapses rather than
+   * expansions means everything is open by default, including clusters that
+   * only come into existence when the slider moves.
+   */
+  collapsed: Set<number>;
   selected: Set<number>;
   dupeGroups: number[][];
   records: Map<string, TabRecord>;
@@ -238,7 +243,7 @@ async function run() {
     tabs,
     merges,
     heights: sortedHeights(merges),
-    expanded: new Set(),
+    collapsed: new Set(),
     selected: new Set(),
     dupeGroups: groupDuplicates(nearDuplicatePairs(inputs, NEAR_DUPLICATE_SIMILARITY)),
     records,
@@ -331,36 +336,67 @@ function labelSources(leaves: number[]): LabelSource[] {
   });
 }
 
-function render() {
-  if (!state) return;
-  const threshold = currentThreshold();
-  const clusters = cutTree(state.merges, state.tabs.length, threshold);
-  const labels = labelClusters(clusters.map((c) => labelSources(c.leaves)));
+/** Values shared by every cluster in one render pass. */
+interface RenderContext {
+  members: number[][];
+  dupeIndices: Set<number>;
+}
 
-  const dupeIndices = new Set(state.dupeGroups.flat());
-  const ranked = clusters
+/** Order clusters by how much closing them would help, largest payoff first. */
+function rank(clusters: CutCluster[], context: RenderContext) {
+  const labels = labelClusters(clusters.map((c) => labelSources(c.leaves)));
+  return clusters
     .map((cluster, i) => ({
       cluster,
       label: labels[i],
       tabs: tabsOf(cluster.leaves),
-      dupes: cluster.leaves.filter((leaf) => dupeIndices.has(leaf)).length,
+      dupes: cluster.leaves.filter((leaf) => context.dupeIndices.has(leaf)).length,
     }))
-    .sort(
-      (a, b) =>
-        closureScore(b.tabs, b.dupes) - closureScore(a.tabs, a.dupes),
-    );
+    .sort((a, b) => closureScore(b.tabs, b.dupes) - closureScore(a.tabs, a.dupes));
+}
+
+let renderQueued = false;
+
+/**
+ * Coalesce renders to one per frame. Dragging the slider fires `input` on every
+ * pixel, and with all clusters expanded a pass rebuilds every visible row.
+ */
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render();
+  });
+}
+
+function render() {
+  if (!state) return;
+  const threshold = currentThreshold();
+  const context: RenderContext = {
+    members: collectMembers(state.merges, state.tabs.length),
+    dupeIndices: new Set(state.dupeGroups.flat()),
+  };
+  const clusters = cutTree(
+    state.merges,
+    state.tabs.length,
+    threshold,
+    context.members,
+  );
+  const ranked = rank(clusters, context);
 
   el("cut-readout").textContent = `cut ${threshold.toFixed(2)} · ${clusters.length} clusters`;
   el("stats").textContent =
-    `${state.tabs.length} tabs · ${clusters.length} clusters · ${dupeIndices.size} near-duplicates`;
+    `${state.tabs.length} tabs · ${clusters.length} clusters · ${context.dupeIndices.size} near-duplicates`;
 
   const host = el("clusters");
   host.replaceChildren(
     ...ranked.map((entry) =>
-      renderCluster(entry.cluster, entry.label, entry.tabs, entry.dupes, 0),
+      renderCluster(entry.cluster, entry.label, entry.tabs, entry.dupes, 0, context),
     ),
   );
 
+  updateFoldAllLabel();
   renderDuplicates();
   renderSelection();
 }
@@ -371,28 +407,36 @@ function renderCluster(
   tabs: TriageTab[],
   dupes: number,
   depth: number,
+  context: RenderContext,
 ): HTMLElement {
+  // A cluster of one is just a tab. Rendering it as a header would leave it
+  // without the close button, tag control and click-to-activate every other
+  // tab has.
+  if (tabs.length === 1) {
+    const row = renderTab(tabs[0]);
+    row.style.setProperty("--depth", String(depth));
+    return row;
+  }
+
   const wrapper = document.createElement("section");
   wrapper.className = "cluster";
   wrapper.style.setProperty("--depth", String(depth));
 
-  const isExpanded = state!.expanded.has(cluster.node);
-  const isSingleton = tabs.length === 1;
+  const isExpanded = !state!.collapsed.has(cluster.node);
 
   const header = document.createElement("div");
   header.className = "cluster-header";
 
   const chevron = document.createElement("button");
   chevron.className = "chevron";
-  chevron.textContent = isSingleton ? "·" : isExpanded ? "▼" : "▶";
-  chevron.disabled = isSingleton;
+  chevron.textContent = isExpanded ? "▼" : "▶";
   chevron.setAttribute(
     "aria-label",
     isExpanded ? "Collapse cluster" : "Expand cluster",
   );
   chevron.addEventListener("click", () => {
-    if (isExpanded) state!.expanded.delete(cluster.node);
-    else state!.expanded.add(cluster.node);
+    if (isExpanded) state!.collapsed.add(cluster.node);
+    else state!.collapsed.delete(cluster.node);
     render();
   });
 
@@ -410,7 +454,7 @@ function renderCluster(
 
   const name = document.createElement("span");
   name.className = "cluster-name";
-  name.textContent = isSingleton ? tabs[0].title : label;
+  name.textContent = label;
 
   const meta = document.createElement("span");
   meta.className = "cluster-meta";
@@ -438,23 +482,23 @@ function renderCluster(
               cluster.node,
               SUB_CUT_QUANTILE,
             ),
+            context.members,
           )
         : null;
 
     if (subs && subs.length > 1) {
-      const subLabels = labelClusters(subs.map((s) => labelSources(s.leaves)));
-      const dupeIndices = new Set(state!.dupeGroups.flat());
-      subs.forEach((sub, i) => {
+      for (const entry of rank(subs, context)) {
         body.append(
           renderCluster(
-            sub,
-            subLabels[i],
-            tabsOf(sub.leaves),
-            sub.leaves.filter((leaf) => dupeIndices.has(leaf)).length,
+            entry.cluster,
+            entry.label,
+            entry.tabs,
+            entry.dupes,
             depth + 1,
+            context,
           ),
         );
-      });
+      }
     } else {
       for (const tab of tabs) body.append(renderTab(tab));
     }
@@ -770,7 +814,43 @@ function renderSelection() {
 
 // ===== Wiring =====
 
-el("cut").addEventListener("input", render);
+/** Every visible cluster node, so "collapse all" reaches sub-clusters too. */
+function visibleClusterNodes(): number[] {
+  if (!state) return [];
+  const members = collectMembers(state.merges, state.tabs.length);
+  const out: number[] = [];
+  const walk = (clusters: CutCluster[]) => {
+    for (const cluster of clusters) {
+      if (cluster.leaves.length < 2) continue;
+      out.push(cluster.node);
+      if (cluster.leaves.length < MIN_SUBCLUSTER_PARENT) continue;
+      const subs = subCut(
+        state!.merges,
+        state!.tabs.length,
+        cluster.node,
+        subCutThreshold(state!.merges, state!.tabs.length, cluster.node, SUB_CUT_QUANTILE),
+        members,
+      );
+      if (subs && subs.length > 1) walk(subs);
+    }
+  };
+  walk(cutTree(state.merges, state.tabs.length, currentThreshold(), members));
+  return out;
+}
+
+function updateFoldAllLabel() {
+  el("fold-all").textContent =
+    state && state.collapsed.size > 0 ? "Expand all" : "Collapse all";
+}
+
+el("fold-all").addEventListener("click", () => {
+  if (!state) return;
+  if (state.collapsed.size > 0) state.collapsed.clear();
+  else for (const node of visibleClusterNodes()) state.collapsed.add(node);
+  render();
+});
+
+el("cut").addEventListener("input", scheduleRender);
 el("rescan").addEventListener("click", () => void run());
 el("selection-clear").addEventListener("click", () => {
   state?.selected.clear();

@@ -159,11 +159,20 @@ try {
   }
 
   const report = async () => {
-    const names = await triage.$$eval(".cluster > .cluster-header", (rows) =>
-      rows.map((r) => ({
-        name: r.querySelector(".cluster-name")?.textContent ?? "",
-        meta: r.querySelector(".cluster-meta")?.textContent ?? "",
-      })),
+    const names = await triage.$$eval(
+      "main > .cluster > .cluster-header, main > .tab-row",
+      (rows) =>
+        rows.map((r) =>
+          r.classList.contains("tab-row")
+            ? {
+                name: r.querySelector(".tab-title")?.textContent ?? "",
+                meta: "1 tab",
+              }
+            : {
+                name: r.querySelector(".cluster-name")?.textContent ?? "",
+                meta: r.querySelector(".cluster-meta")?.textContent ?? "",
+              },
+        ),
     );
     for (const { name, meta } of names) console.log(`  - ${name}  (${meta})`);
     return names;
@@ -172,12 +181,24 @@ try {
   console.log("\nclusters at the default cut:");
   const atDefault = await report();
 
-  // Slider must change granularity monotonically.
-  const counts = [];
-  for (const position of [100, 300, 500, 700, 900]) {
+  // Renders are coalesced to one animation frame, so settle before reading.
+  const setCut = async (position) => {
     await triage.fill("#cut", String(position));
     await triage.dispatchEvent("#cut", "input");
-    counts.push(await triage.$$eval(".cluster > .cluster-header", (r) => r.length));
+    await triage.evaluate(
+      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    );
+  };
+
+  // Slider must change granularity monotonically. Counts every cluster plus
+  // every top-level singleton, which now renders as a plain row.
+  const clusterCount = () =>
+    triage.$$eval("main > .cluster, main > .tab-row", (r) => r.length);
+
+  const counts = [];
+  for (const position of [100, 300, 500, 700, 900]) {
+    await setCut(position);
+    counts.push(await clusterCount());
   }
   console.log(`\ncluster count across slider positions: ${counts.join(" → ")}`);
   for (let i = 1; i < counts.length; i++) {
@@ -187,16 +208,48 @@ try {
     }
   }
 
-  // Drill into the largest cluster and confirm sub-clusters or tabs appear.
-  await triage.fill("#cut", "500");
-  await triage.dispatchEvent("#cut", "input");
-  await triage.click(".cluster .chevron:not([disabled])");
-  const bodyRows = await triage.$$eval(
-    ".cluster-body",
-    (b) => b[0]?.children.length ?? 0,
+  // Clusters start expanded, so every tab must be on screen with no clicking.
+  // Counted inside clusters plus top-level singletons; the duplicates panel
+  // repeats rows, so it is excluded.
+  const visibleTabs = () =>
+    triage.$$eval(
+      "main .cluster-body .tab-row, main > .tab-row",
+      (r) => r.length,
+    );
+
+  await setCut(500);
+  const openRows = await visibleTabs();
+  console.log(`tab rows visible without clicking: ${openRows} of ${PAGES.length}`);
+  if (openRows < PAGES.length) {
+    failures.push(
+      `only ${openRows} of ${PAGES.length} tabs visible without clicking`,
+    );
+  }
+
+  // Collapse all, then expand all, and confirm the state round-trips.
+  await triage.click("#fold-all");
+  const collapsed = await triage.$$eval(
+    "main .cluster-body .tab-row",
+    (r) => r.length,
   );
-  console.log(`expanding the top cluster revealed ${bodyRows} rows`);
-  if (bodyRows === 0) failures.push("expanding a cluster revealed nothing");
+  console.log(`tab rows inside clusters after Collapse all: ${collapsed}`);
+  if (collapsed !== 0) {
+    failures.push(`Collapse all left ${collapsed} tab rows on screen`);
+  }
+
+  await triage.click("#fold-all");
+  const reopened = await visibleTabs();
+  console.log(`tab rows after Expand all: ${reopened}`);
+  if (reopened !== openRows) {
+    failures.push(`Expand all restored ${reopened}, expected ${openRows}`);
+  }
+
+  // Collapsing one cluster must hide only that cluster's tabs.
+  await triage.click("main > .cluster .chevron");
+  const afterOne = await visibleTabs();
+  console.log(`tab rows after collapsing one cluster: ${afterOne}`);
+  if (afterOne >= reopened) failures.push("collapsing one cluster hid nothing");
+  if (afterOne === 0) failures.push("collapsing one cluster hid everything");
 
   if (atDefault.length < 2) {
     failures.push(`expected several clusters, got ${atDefault.length}`);

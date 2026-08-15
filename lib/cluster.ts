@@ -161,8 +161,13 @@ export function linkage(condensed: Float32Array, n: number): Merge[] {
   return merges;
 }
 
-/** Leaves under every dendrogram node, indexed by node id. */
-function collectMembers(merges: Merge[], n: number): number[][] {
+/**
+ * Leaves under every dendrogram node, indexed by node id. Build this once per
+ * render and hand it to cutTree/subCut: with every cluster expanded there is
+ * one subCut call per visible cluster, and recomputing it in each would walk
+ * the whole tree dozens of times.
+ */
+export function collectMembers(merges: Merge[], n: number): number[][] {
   const members: number[][] = [];
   for (let i = 0; i < n; i++) members.push([i]);
   for (const { a, b } of merges) members.push(members[a].concat(members[b]));
@@ -206,12 +211,13 @@ export function cutTree(
   merges: Merge[],
   n: number,
   threshold: number,
+  precomputed?: number[][],
 ): CutCluster[] {
   if (n === 0) return [];
   if (merges.length === 0) {
     return [{ node: 0, leaves: [0], height: 0 }];
   }
-  const members = collectMembers(merges, n);
+  const members = precomputed ?? collectMembers(merges, n);
   const out: CutCluster[] = [];
   descend(merges, n, members, n + merges.length - 1, threshold, out);
   return out.sort((x, y) => y.leaves.length - x.leaves.length);
@@ -227,9 +233,10 @@ export function subCut(
   n: number,
   node: number,
   threshold: number,
+  precomputed?: number[][],
 ): CutCluster[] | null {
   if (node < n) return null;
-  const members = collectMembers(merges, n);
+  const members = precomputed ?? collectMembers(merges, n);
   const out: CutCluster[] = [];
   descend(merges, n, members, node, threshold, out);
   if (out.length < 2) return null;

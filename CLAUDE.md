@@ -82,6 +82,10 @@ pnpm build  # production build
 - Setting `wasmPaths` makes ORT request the **asyncify** runtime pair, not the plain one — verified by `scripts/verify-triage.mjs`, which asserts every fetched `ort/` file is one `copy-ort.mjs` stages. `lib/embed.test.ts` pins the transformers.js minor so a bump forces that check to be re-run
 - Embeddings are cached per URL in `chrome.storage.local` as base64 int8 (~384 bytes/tab), keyed by a fingerprint of the feature text so a retitled or retagged tab re-embeds and nothing else does. One batched write per run, never per tab
 - Near-duplicates read raw embeddings, deliberately bypassing the structural factors, or same-domain tabs would register as duplicates of each other on shape alone
+- Everything renders expanded. State tracks `collapsed` node ids, not expanded ones, so clusters that only come into existence when the slider moves are open too; "Collapse all" walks the visible tree and adds every node
+- A cluster of one renders as a plain `.tab-row`, not a header, so it keeps the close button, tag control and click-to-activate. Anything counting clusters in the DOM has to match `main > .cluster, main > .tab-row`
+- `collectMembers` is computed once per render and threaded through `cutTree`/`subCut` via the optional `precomputed` argument. With every cluster expanded there is one `subCut` per visible cluster, and each would otherwise rewalk the whole tree
+- Renders are coalesced to one animation frame (`scheduleRender`). The slider fires `input` per pixel and a pass rebuilds every visible row; anything reading the DOM after a slider change has to wait two frames
 
 ## Notes
 

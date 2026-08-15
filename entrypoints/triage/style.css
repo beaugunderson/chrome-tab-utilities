@@ -175,11 +175,6 @@ main {
   font-size: 10px;
 }
 
-.chevron:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
 .cluster-name {
   overflow: hidden;
   font-weight: 600;
@@ -211,7 +206,9 @@ main {
 
 /* ===== Tab rows ===== */
 
+/* A top-level tab row is a cluster of one, so it indents like a cluster. */
 .tab-row {
+  margin-left: calc(var(--depth, 0) * 20px);
   display: flex;
   align-items: center;
   gap: 8px;

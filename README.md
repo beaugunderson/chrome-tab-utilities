@@ -27,7 +27,9 @@ A separate page ("Triage tabs by topic" in the popup, or the `triage-tabs` comma
 
 Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata, URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
 
-The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag; it is the same tree cut at a different height. Expanding a cluster re-cuts its own subtree, so a broad "news" cluster opens into per-story sub-clusters.
+The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag; it is the same tree cut at a different height. A cluster shows its own sub-clusters, so a broad "news" cluster opens into per-story groups.
+
+Everything starts expanded, including sub-clusters and clusters that only appear as you move the slider. "Collapse all" folds the lot; individual collapses stick.
 
 - Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
 - Cluster names come from c-TF-IDF over the member titles: words frequent inside the cluster and rare across the others. No model call, so names update instantly with the slider.

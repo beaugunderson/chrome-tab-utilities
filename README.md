@@ -17,8 +17,26 @@ Chrome caps extensions at 4 `suggested_key` bindings per manifest, so the remain
 - **Sort tabs by URL / by title** — Reorders tabs in the current window. Groups are alphabetized A→Z; within each group, tabs are sorted by SLD+subdomain+path (URL mode) or title (title mode). Pinned tabs are untouched, ungrouped tabs go at the end.
 - **Show vertical tabs** — Opens a side panel listing every tab in the current window in real tab-strip order, with group headers and colors preserved. Click a row to activate, × (or middle-click) to close, click a group header to collapse/expand (syncs back to Chrome's tab strip).
 - **Close stale GitHub tabs** — Closes, for each GitHub owner listed on the options page: every `/pulls` list page and `/actions/runs/<id>` workflow-run page, plus any `/pull/<n>` tab whose PR is merged or closed. PR state is read directly from each tab's DOM (no API calls), so it's fast even with many tabs. Discarded PR tabs are reloaded first so they have a DOM to read — safe, because a discarded tab is already unloaded and has no draft to lose; loaded tabs are read in place and never reloaded.
+- **Triage tabs by topic** — Opens a full-page view that clusters every tab by meaning rather than by domain, ordered by how much closing each cluster would help. See below.
 
-Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's native `chrome.tabs.discard`. Pinned tabs, tabs playing audio, and any host starting with `archive.` (archive.org, archive.today, archive.ph, etc.) are exempted, as are tabs with unsaved form input. Discarding pauses while offline so reloads don't fail.
+Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's native `chrome.tabs.discard`. Pinned tabs, tabs playing audio, and any host starting with `archive.` (archive.org, archive.today, archive.ph, etc.) are exempted, as are tabs with unsaved form input. Discarding pauses while offline so reloads don't fail. A single repeating alarm sweeps all tabs once a minute, so it works at any tab count (Chrome caps an extension at 500 active alarms).
+
+## Tab triage
+
+A separate page ("Triage tabs by topic" in the popup, or the `triage-tabs` command) that groups tabs by what they are *about*, for deciding what to close.
+
+Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata, URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
+
+The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag; it is the same tree cut at a different height. Expanding a cluster re-cuts its own subtree, so a broad "news" cluster opens into per-story sub-clusters.
+
+- Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
+- Cluster names come from c-TF-IDF over the member titles: words frequent inside the cluster and rare across the others. No model call, so names update instantly with the slider.
+- **Near-duplicates** are found by cosine similarity rather than URL, which catches the same story on three different sites — something the URL-based duplicate closer structurally cannot.
+- Per-cluster actions: close all, keep the 3 most recent, apply as a Chrome tab group, move to a new window, tag all.
+- **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.
+- Pinned, blank, and new-tab pages are excluded. Nothing is written to a real tab until you press an action.
+
+Everything runs locally. The model weights (~25MB) download from the Hugging Face CDN on first run and are cached by the browser; no tab data leaves the machine. Embeddings are cached per URL as int8 vectors and only recomputed when a tab's title, metadata, or tags change.
 
 The toolbar icon opens a popup listing every action plus live counts for duplicates and windows. A badge on the icon shows the duplicate count across all windows (debounced, only recomputed on URL changes).
 
@@ -33,7 +51,13 @@ pnpm install
 pnpm dev        # launch Chrome with extension loaded
 pnpm build      # production build → .output/chrome-mv3/
 pnpm zip        # zip for Chrome Web Store
+pnpm test       # vitest unit tests for the clustering/labeling/discard logic
+pnpm typecheck
 ```
+
+`pnpm build` first runs `scripts/copy-ort.mjs`, which stages the ONNX runtime into `public/ort/` (gitignored). MV3 forbids loading remote script, so the runtime has to be served by the extension itself.
+
+After a build, `node scripts/verify-triage.mjs` runs the triage page end to end: it loads the built extension into a throwaway Chrome profile, opens a set of pages across known topics, and asserts they cluster, that the slider changes granularity monotonically, that near-duplicates are detected, and that every ONNX runtime file the page requests is one `copy-ort.mjs` stages.
 
 ## Install from source
 

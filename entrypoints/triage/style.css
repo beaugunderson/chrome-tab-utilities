@@ -1,0 +1,388 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --hover: #f6f8fa;
+  --border: #d1d9e0;
+  --accent: #764ba2;
+  --danger: #d93025;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1f23;
+    --fg: #f0f6fc;
+    --muted: #9198a1;
+    --hover: #262c33;
+    --border: #30363d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 0 72px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px 20px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.titlebar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stats {
+  flex: 1;
+  color: var(--muted);
+}
+
+/* ===== Granularity slider ===== */
+
+.granularity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.granularity label {
+  font-weight: 600;
+}
+
+.granularity .end {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.granularity input[type="range"] {
+  flex: 1;
+  max-width: 420px;
+  accent-color: var(--accent);
+}
+
+.readout {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Progress ===== */
+
+.progress {
+  padding: 24px 20px;
+}
+
+.progress-label {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.progress-track {
+  height: 4px;
+  overflow: hidden;
+  background: var(--hover);
+  border-radius: 2px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.progress-bar.indeterminate {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.progress-note,
+.note {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.empty {
+  padding: 24px 20px;
+  color: var(--muted);
+}
+
+/* ===== Clusters ===== */
+
+main {
+  padding: 8px 20px;
+}
+
+.cluster {
+  margin-left: calc(var(--depth) * 20px);
+}
+
+.cluster-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cluster-header:hover {
+  background: var(--hover);
+}
+
+.chevron {
+  width: 20px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.chevron:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.cluster-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cluster-meta {
+  flex: 1;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cluster-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+}
+
+.cluster-header:hover .cluster-actions,
+.cluster-actions:focus-within {
+  opacity: 1;
+}
+
+.cluster-body {
+  padding-left: 8px;
+}
+
+/* ===== Tab rows ===== */
+
+.tab-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 28px;
+  border-radius: 6px;
+}
+
+.tab-row:hover {
+  background: var(--hover);
+}
+
+.tab-row.discarded .tab-title {
+  opacity: 0.55;
+}
+
+.favicon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tab-title:hover {
+  text-decoration: underline;
+}
+
+.tab-host,
+.tab-idle {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tab-idle {
+  width: 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab-close {
+  width: 20px;
+  flex: none;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  font-size: 14px;
+}
+
+.tab-row:hover .tab-close {
+  opacity: 1;
+}
+
+/* ===== Tags ===== */
+
+.tags {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.tag {
+  padding: 1px 7px;
+  color: var(--fg);
+  /* Chrome's own pill idiom rather than an accent stripe. */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.tag.suggested {
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--border);
+}
+
+.tag.add {
+  color: var(--muted);
+  background: none;
+  opacity: 0;
+}
+
+.tab-row:hover .tag.add {
+  opacity: 1;
+}
+
+/* ===== Duplicates ===== */
+
+.dupes {
+  margin: 16px 20px;
+  padding: 12px 16px;
+  background: var(--hover);
+  border-radius: 8px;
+}
+
+.dupe-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* ===== Selection footer ===== */
+
+.selection {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+}
+
+.selection span {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* ===== Buttons ===== */
+
+button.ghost,
+button.danger {
+  padding: 4px 10px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.small {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+button.ghost:hover {
+  border-color: var(--accent);
+}
+
+button.danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

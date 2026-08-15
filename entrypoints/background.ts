@@ -1,4 +1,9 @@
-import { getDomainWithoutSuffix, parse as parseTld } from "tldts";
+import { parse as parseTld } from "tldts";
+import type { PageMeta } from "../lib/features";
+import { type DiscardPolicy, selectDiscardCandidates } from "../lib/discard";
+import { patchRecord } from "../lib/store";
+import { removeTabs } from "../lib/tabs";
+import { domainKey } from "../lib/url";
 
 const MIN_TABS = 4;
 const IGNORE_PINNED = true;
@@ -16,8 +21,9 @@ const DISCARD_IGNORE_AUDIBLE = true;
 const DISCARD_PAUSE_WHEN_OFFLINE = true;
 // Hosts that start with any of these prefixes are never auto-discarded.
 const DISCARD_HOST_PREFIX_DENYLIST = ["archive."];
-const DISCARD_ALARM_PREFIX = "discard:";
-const ACTIVE_TAB_SESSION_PREFIX = "activeTab:";
+const DISCARD_SWEEP_ALARM = "discard-sweep";
+const DISCARD_SWEEP_EVERY_MINUTES = 1;
+const DISCARD_SWEEP_CONCURRENCY = 12;
 
 // Which GitHub owners the stale-tab sweep applies to. Set on the options page
 // and stored in chrome.storage.sync; empty until configured.
@@ -49,8 +55,12 @@ export default defineBackground(() => {
       await sortTabsInCurrentWindow("title");
     } else if (command === "close-stale-github-tabs") {
       await closeStaleGithubTabs();
+    } else if (command === "triage-tabs") {
+      await openTriagePage();
     }
   });
+
+  setupTabSignals();
 
   // Map key is `${windowId}:${domain}` so timers for different windows
   // don't stomp on each other.
@@ -116,14 +126,29 @@ type PopupAction =
   | "sort-tabs-by-url"
   | "sort-tabs-by-title"
   | "close-stale-github-tabs"
+  | "triage-tabs"
   | "get-counts";
 
 interface PopupMessage {
   type: PopupAction;
 }
 
+/** Page metadata pushed by the content script on every page load. */
+interface PageMetaMessage {
+  type: "page-meta";
+  url: string;
+  meta: PageMeta;
+}
+
 async function handlePopupMessage(msg: PopupMessage | unknown) {
   if (typeof msg !== "object" || msg === null || !("type" in msg)) return;
+
+  if ((msg as PageMetaMessage).type === "page-meta") {
+    const { url, meta } = msg as PageMetaMessage;
+    await patchRecord(url, { meta });
+    return { ok: true };
+  }
+
   const { type } = msg as PopupMessage;
   switch (type) {
     case "copy-tabs":
@@ -155,9 +180,69 @@ async function handlePopupMessage(msg: PopupMessage | unknown) {
       return { ok: true };
     case "close-stale-github-tabs":
       return { ok: true, closed: await closeStaleGithubTabs() };
+    case "triage-tabs":
+      await openTriagePage();
+      return { ok: true };
     case "get-counts":
       return await getCounts();
   }
+}
+
+// ===== Tab signals for triage =====
+
+// Chrome discards openerTabId on restart and resets lastAccessed, so both are
+// snapshotted per URL. The opener graph in particular is the strongest
+// same-task signal available and there is no way to recover it after the fact.
+
+function setupTabSignals() {
+  chrome.tabs.onCreated.addListener((tab) => {
+    if (tab.openerTabId === undefined || !tab.id) return;
+    const openerTabId = tab.openerTabId;
+    const tabId = tab.id;
+    // The new tab usually has no URL yet, so wait for its first committed one
+    // and pair that with the opener's URL.
+    const onUpdated = (
+      updatedId: number,
+      changeInfo: chrome.tabs.OnUpdatedInfo,
+    ) => {
+      if (updatedId !== tabId || !changeInfo.url) return;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      void chrome.tabs
+        .get(openerTabId)
+        .then((opener) => {
+          if (opener.url) {
+            return patchRecord(changeInfo.url!, { opener: opener.url });
+          }
+        })
+        .catch(() => {
+          // Opener already closed; the relationship is simply unavailable.
+        });
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    void chrome.tabs
+      .get(tabId)
+      .then((tab) => {
+        if (tab.url) return patchRecord(tab.url, { seen: Date.now() });
+      })
+      .catch(() => {});
+  });
+}
+
+/** Focus an existing triage tab rather than piling up duplicates. */
+async function openTriagePage() {
+  const url = chrome.runtime.getURL("triage.html");
+  const [existing] = await chrome.tabs.query({ url });
+  if (existing?.id !== undefined) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId !== undefined) {
+      await chrome.windows.update(existing.windowId, { focused: true });
+    }
+    return;
+  }
+  await chrome.tabs.create({ url });
 }
 
 async function getCounts() {
@@ -255,19 +340,6 @@ async function ensureOffscreenDocument() {
 // update/group call.
 function isMissingGroupError(e: unknown): boolean {
   return e instanceof Error && /No group with id/.test(e.message);
-}
-
-function domainKey(url: string | undefined): string | null {
-  if (!url) return null;
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    return null;
-  }
-  if (!host) return null;
-  const sld = getDomainWithoutSuffix(host, { allowPrivateDomains: false });
-  return (sld || host).toUpperCase();
 }
 
 async function groupAllTabsByDomain() {
@@ -829,13 +901,6 @@ async function closeStaleGithubTabs(): Promise<number> {
 // stale (a tab the user closed mid-sweep, or a discarded tab whose id changed
 // on reload), which would otherwise close nothing and throw uncaught. Returns
 // the number actually closed.
-async function removeTabs(ids: number[]): Promise<number> {
-  const results = await Promise.allSettled(
-    ids.map((id) => chrome.tabs.remove(id)),
-  );
-  return results.filter((r) => r.status === "fulfilled").length;
-}
-
 function classifyGithubTab(
   url: string | undefined,
   orgs: string[],
@@ -981,168 +1046,50 @@ async function mapWithConcurrency<T, R>(
 
 // ===== Auto-discard =====
 
+// One repeating alarm sweeps every tab. Chrome caps an extension at 500 active
+// alarms, so a per-tab timer breaks outright on a large tab set; the sweep also
+// removes all the arm/clear/re-arm bookkeeping, since every check is made
+// against the tab's state at the moment it would be discarded.
+
 function setupAutoDiscard() {
+  chrome.alarms.create(DISCARD_SWEEP_ALARM, {
+    periodInMinutes: DISCARD_SWEEP_EVERY_MINUTES,
+  });
+
   chrome.alarms.onAlarm.addListener((alarm) => {
-    const tabId = tabIdFromDiscardAlarm(alarm.name);
-    if (tabId === null) return;
-    void maybeDiscardTab(tabId);
+    if (alarm.name !== DISCARD_SWEEP_ALARM) return;
+    void sweepDiscardableTabs();
   });
-
-  chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
-    void handleTabActivated(tabId, windowId);
-  });
-
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // Reset the timer when navigation finishes or audio stops; without this,
-    // a tab that just became eligible (audio ended, page finished loading)
-    // would keep its old timer (or have none) and miss its discard window.
-    if (
-      changeInfo.status === "complete" ||
-      changeInfo.audible === false ||
-      changeInfo.url
-    ) {
-      armDiscardTimer(tab);
-    } else if (changeInfo.discarded === true) {
-      clearDiscardTimer(tabId);
-    }
-  });
-
-  chrome.tabs.onCreated.addListener((tab) => armDiscardTimer(tab));
-
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    clearDiscardTimer(tabId);
-  });
-
-  chrome.windows.onRemoved.addListener((windowId) => {
-    void chrome.storage.session.remove(activeTabSessionKey(windowId));
-  });
-
-  chrome.runtime.onStartup.addListener(() => {
-    void chrome.storage.session.clear().then(() => armMissingInactiveTabs());
-  });
-  chrome.runtime.onInstalled.addListener(() => void armMissingInactiveTabs());
-
-  // First boot of this SW instance — alarms persist across SW sleep, but if
-  // the extension was just installed/updated, prime everything.
-  void armMissingInactiveTabs();
 }
 
-async function handleTabActivated(tabId: number, windowId: number) {
-  clearDiscardTimer(tabId);
+const DISCARD_POLICY: DiscardPolicy = {
+  afterMinutes: DISCARD_AFTER_MINUTES,
+  ignorePinned: DISCARD_IGNORE_PINNED,
+  ignoreAudible: DISCARD_IGNORE_AUDIBLE,
+  hostPrefixDenylist: DISCARD_HOST_PREFIX_DENYLIST,
+  pauseWhenOffline: DISCARD_PAUSE_WHEN_OFFLINE,
+};
 
-  const key = activeTabSessionKey(windowId);
-  const stored = await chrome.storage.session.get(key);
-  const previousTabId = stored[key];
+async function sweepDiscardableTabs() {
+  const tabs = await chrome.tabs.query({});
+  const candidates = selectDiscardCandidates(tabs, DISCARD_POLICY, {
+    now: Date.now(),
+    online: navigator.onLine,
+  });
+  if (candidates.length === 0) return;
 
-  await chrome.storage.session.set({ [key]: tabId });
-
-  if (typeof previousTabId === "number" && previousTabId !== tabId) {
+  // The dirty-form check is a message round trip per tab, so cap how many are
+  // in flight at once on a large sweep.
+  await mapWithConcurrency(candidates, DISCARD_SWEEP_CONCURRENCY, async (tabId) => {
+    if (await isFormDirty(tabId)) return;
     try {
-      const previousTab = await chrome.tabs.get(previousTabId);
-      armDiscardTimer(previousTab);
+      await chrome.tabs.discard(tabId);
     } catch {
-      // tab gone — ignore
+      // Activated or removed between the sweep and the call.
     }
-  }
-}
-
-function discardAlarmName(tabId: number): string {
-  return `${DISCARD_ALARM_PREFIX}${tabId}`;
-}
-
-function tabIdFromDiscardAlarm(name: string): number | null {
-  if (!name.startsWith(DISCARD_ALARM_PREFIX)) return null;
-  const id = parseInt(name.slice(DISCARD_ALARM_PREFIX.length), 10);
-  return Number.isFinite(id) ? id : null;
-}
-
-function activeTabSessionKey(windowId: number): string {
-  return `${ACTIVE_TAB_SESSION_PREFIX}${windowId}`;
-}
-
-function isSpecialDiscardURL(url: string | undefined): boolean {
-  if (!url) return true;
-  return (
-    url.startsWith("chrome:") ||
-    url.startsWith("chrome-extension:") ||
-    url.startsWith("chrome-devtools:") ||
-    url.startsWith("devtools:") ||
-    url.startsWith("edge:") ||
-    url.startsWith("about:") ||
-    url.startsWith("file:") ||
-    url.includes("chromewebstore.google.com") ||
-    url.includes("chrome.google.com/webstore")
-  );
-}
-
-function isHostDenylisted(url: string | undefined): boolean {
-  if (!url) return false;
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  return DISCARD_HOST_PREFIX_DENYLIST.some((prefix) => host.startsWith(prefix));
-}
-
-// chrome.alarms minimum delay is 30s. A tab idle longer than the discard
-// window should fire (close to) immediately on the next SW pass.
-const ALARM_MIN_DELAY_MS = 30 * 1000;
-
-function armDiscardTimer(tab: chrome.tabs.Tab) {
-  if (tab.id === undefined) return;
-  if (tab.discarded) return;
-  if (tab.active) return;
-  if (isSpecialDiscardURL(tab.url)) return;
-  // Pinned/audible/whitelist are checked again at fire time. We could skip
-  // the alarm here too, but leaving it scheduled keeps the logic simple if
-  // the tab later becomes unpinned, etc. — re-checked before discard.
-  const lastAccess = tab.lastAccessed ?? Date.now();
-  const idleMs = Math.max(0, Date.now() - lastAccess);
-  const remainingMs = Math.max(
-    DISCARD_AFTER_MINUTES * 60 * 1000 - idleMs,
-    ALARM_MIN_DELAY_MS,
-  );
-  chrome.alarms.create(discardAlarmName(tab.id), {
-    when: Date.now() + remainingMs,
   });
 }
 
-function clearDiscardTimer(tabId: number) {
-  void chrome.alarms.clear(discardAlarmName(tabId));
-}
-
-// SW boot path: never overwrite an existing alarm — MV3 service workers
-// restart constantly, and re-arming on every boot would push every timer back
-// to "now + 60min" forever, so nothing ever discards.
-async function armMissingInactiveTabs() {
-  const [tabs, alarms] = await Promise.all([
-    chrome.tabs.query({}),
-    chrome.alarms.getAll(),
-  ]);
-  const liveTabIds = new Set(
-    tabs
-      .map((t) => t.id)
-      .filter((id): id is number => id !== undefined),
-  );
-  const armedTabIds = new Set<number>();
-  for (const alarm of alarms) {
-    const tabId = tabIdFromDiscardAlarm(alarm.name);
-    if (tabId === null) continue;
-    if (liveTabIds.has(tabId)) {
-      armedTabIds.add(tabId);
-    } else {
-      // Stale alarm (browser restart re-numbers tab IDs, or removal listener
-      // missed). Drop it.
-      void chrome.alarms.clear(alarm.name);
-    }
-  }
-  for (const tab of tabs) {
-    if (tab.id !== undefined && armedTabIds.has(tab.id)) continue;
-    armDiscardTimer(tab);
-  }
-}
 
 async function isFormDirty(tabId: number): Promise<boolean> {
   // Content script lives in the page, so this round-trip survives SW sleep.
@@ -1156,33 +1103,5 @@ async function isFormDirty(tabId: number): Promise<boolean> {
     return response?.dirty === true;
   } catch {
     return false;
-  }
-}
-
-async function isDiscardEligible(tab: chrome.tabs.Tab): Promise<boolean> {
-  if (tab.id === undefined) return false;
-  if (tab.discarded) return false;
-  if (tab.active) return false;
-  if (isSpecialDiscardURL(tab.url)) return false;
-  if (DISCARD_IGNORE_PINNED && tab.pinned) return false;
-  if (DISCARD_IGNORE_AUDIBLE && tab.audible) return false;
-  if (isHostDenylisted(tab.url)) return false;
-  if (DISCARD_PAUSE_WHEN_OFFLINE && !navigator.onLine) return false;
-  if (await isFormDirty(tab.id)) return false;
-  return true;
-}
-
-async function maybeDiscardTab(tabId: number) {
-  let tab: chrome.tabs.Tab;
-  try {
-    tab = await chrome.tabs.get(tabId);
-  } catch {
-    return; // tab gone
-  }
-  if (!(await isDiscardEligible(tab))) return;
-  try {
-    await chrome.tabs.discard(tabId);
-  } catch {
-    // tab activated/removed between check and call — ignore
   }
 }

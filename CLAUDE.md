@@ -10,17 +10,22 @@ Chrome MV3 extension built with WXT. Keyboard shortcuts for:
 - Vertical tabs via `chrome.sidePanel` — mirrors the current window's tab order and grouping, click row to activate, × / middle-click to close, click group header to toggle collapsed (state syncs back to Chrome's real tab strip)
 - Auto-discard inactive tabs via native `chrome.tabs.discard` (replaces "The Great-er Discarder-er"; native discard only, no suspend page, no migration cruft)
 - Close stale GitHub tabs for the GitHub owners configured on the options page (replaces the `close-stale-gh-tabs` bash script; reads PR merged/closed state from each tab's DOM via `chrome.scripting.executeScript` instead of per-PR `gh pr view` calls)
+- Triage tabs by topic: a full page that clusters every tab semantically with a local embedding model, for bulk closure
 
 ## Structure
 
-- `wxt.config.ts` — manifest config (permissions, keyboard shortcuts, action popup)
-- `entrypoints/background.ts` — command handler, popup message dispatcher, duplicate-tab badge
+- `wxt.config.ts` — manifest config (permissions, keyboard shortcuts, action popup, CSP)
+- `entrypoints/background.ts` — command handler, popup message dispatcher, duplicate-tab badge, discard sweep, tab-signal capture
 - `entrypoints/popup/` — toolbar-icon menu (HTML + TS + CSS) that dispatches actions via `chrome.runtime.sendMessage`
 - `entrypoints/sidepanel/` — vertical tabs side panel (HTML + TS + CSS), bound to its host window
+- `entrypoints/triage/` — semantic clustering page (HTML + TS + CSS); the only place the embedding model runs
 - `entrypoints/options/` — options page (HTML + TS + CSS); holds the only user-facing setting, the GitHub owner list
-- `entrypoints/form-watcher.content.ts` — content script that tracks dirty form input per page, queried by background before discarding
+- `entrypoints/page-signals.content.ts` — content script doing two jobs: dirty-form tracking (queried before discarding) and page-metadata harvesting (cached per URL for clustering)
 - `entrypoints/offscreen.html` — offscreen document for clipboard API access
 - `public/offscreen.js` — offscreen script (in `public/` to avoid WXT naming conflict with the HTML entrypoint)
+- `lib/` — pure modules with vitest coverage: `cluster.ts`, `label.ts`, `features.ts`, `discard.ts`, `store.ts`, `embed.ts`, `tabs.ts`, `url.ts`
+- `scripts/copy-ort.mjs` — stages the ONNX runtime into gitignored `public/ort/` before every build
+- `scripts/verify-triage.mjs` — end-to-end check of the triage page in a real headless Chrome
 
 ## Domain grouping
 
@@ -48,11 +53,11 @@ pnpm build  # production build
 
 ## Auto-discard
 
-- Per-tab `chrome.alarms` keyed `discard:<tabId>`. Set when a tab loses focus (`tabs.onActivated`, page load completes, audio stops, URL changes); cleared when the tab becomes active or is removed
+- One repeating `chrome.alarms` entry (`discard-sweep`, every minute) sweeps all tabs. Chrome caps an extension at **500 active alarms**, so a per-tab alarm scheme throws `An extension cannot have more than 500 active alarms` past that point and stops discarding entirely — never reintroduce one
+- Eligibility lives in `lib/discard.ts` as the pure `selectDiscardCandidates(tabs, policy, {now, online})`, which is unit tested; `background.ts` only supplies the policy and does the async form-dirty check on the survivors
 - Hardcoded settings at top of `background.ts`: `DISCARD_AFTER_MINUTES=60`, ignore pinned + audible, pause when offline, never discard hosts starting with `archive.` (covers archive.org, archive.today, archive.ph, etc.; `web.archive.org` is intentionally still discardable since it just serves snapshots)
-- Form-dirty check: alarm handler `chrome.tabs.sendMessage(tabId, {type: 'is-form-dirty'})` to the content script, which holds a local `dirty` flag flipped on the first `input`/`change` event after navigation. Round-trip survives SW sleep because the content script lives in the page; failed message (no listener / chrome:// page) treated as not-dirty
-- Per-window previous-active-tab tracked in `chrome.storage.session` (key `activeTab:<windowId>`) so SW sleep doesn't lose the "previously active tab needs a fresh timer" signal
-- All eligibility checks (pinned/audible/active/whitelist/offline/dirty) re-evaluated at fire time, not arm time, so a tab unpinned mid-timer can still be discarded
+- Form-dirty check: the sweep sends `chrome.tabs.sendMessage(tabId, {type: 'is-form-dirty'})` to the content script, which holds a local `dirty` flag flipped on the first `input`/`change` event after navigation. Round-trip survives SW sleep because the content script lives in the page; failed message (no listener / chrome:// page) treated as not-dirty. Capped at 12 in flight
+- Because the sweep reads live tab state, every check is evaluated at the moment of discarding: a tab unpinned mid-window is immediately eligible with no timer to re-arm
 
 ## Stale GitHub tab cleanup
 
@@ -63,6 +68,20 @@ pnpm build  # production build
 - Requires the `scripting` permission and `*://github.com/*` host permission
 - Reloading a discarded tab can make Chrome replace it with a **new tab id** (`chrome.tabs.onReplaced`). `ensureTabLoaded` tracks the replacement and returns the live id so injection and removal target the right tab, not the dead pre-reload one
 - Tabs are closed one-by-one via `removeTabs` (Promise.allSettled), never `chrome.tabs.remove([...ids])` — the array form rejects the *whole* batch if any single id is stale, which would close nothing and throw uncaught
+
+## Tab triage (semantic clustering)
+
+- Pipeline: tab → feature text (`lib/features.ts`) → MiniLM embedding (`lib/embed.ts`) → structurally adjusted cosine distance → average-linkage dendrogram (`lib/cluster.ts`) → cut by the granularity slider → c-TF-IDF labels (`lib/label.ts`)
+- **Average linkage, not k-means**: no `k` to choose, singletons are fine, cluster sizes can be wildly uneven, and the merge tree gives sub-clusters for free. NN-chain is exact here because average linkage is reducible for *any* symmetric non-negative input (the Lance-Williams update is a weighted average of the two distances it replaces), which matters since the structural factors deliberately break the triangle inequality
+- **No PCA/UMAP/t-SNE.** At a few hundred tabs the full distance matrix is milliseconds, so reduction buys nothing; it would only be needed for a 2D map. Clustering on t-SNE output would be wrong regardless — it distorts density and inter-cluster distance by design
+- The slider maps its position to a *quantile* of merge heights (`sortedHeights`), not to the raw distance range, or most of the travel would do nothing. Cuts are top-down (`descend`) so the result is always a partition
+- Structural factors in `distanceMatrix` shrink distance multiplicatively: shared opener root ×0.6, same existing tab group ×0.7, same domain ×0.85. `openerTabId` is the strongest same-task signal available
+- Chrome drops `openerTabId` and resets `lastAccessed` on restart, so `setupTabSignals()` in `background.ts` snapshots both per URL into `chrome.storage.local`. There is no way to recover them after the fact
+- **The model runs in the triage page**, not the service worker (killed at 30s idle) and not the offscreen document: Chrome permits exactly one offscreen document, and `writeToClipboard`/`readFromClipboard` call `closeDocument()` after every copy, so a `Cmd+Shift+C` would unload the model
+- MV3 forbids remote script, so the ONNX runtime is served from the extension (`public/ort/`, staged by `scripts/copy-ort.mjs`) with `env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL("ort/")` and `env.useWasmCache = false` (the wasm-cache path builds a blob URL, which the extension CSP blocks). Model *weights* are data and still come from the HF CDN once, hence the `huggingface.co` / `*.hf.co` host permissions
+- Setting `wasmPaths` makes ORT request the **asyncify** runtime pair, not the plain one — verified by `scripts/verify-triage.mjs`, which asserts every fetched `ort/` file is one `copy-ort.mjs` stages. `lib/embed.test.ts` pins the transformers.js minor so a bump forces that check to be re-run
+- Embeddings are cached per URL in `chrome.storage.local` as base64 int8 (~384 bytes/tab), keyed by a fingerprint of the feature text so a retitled or retagged tab re-embeds and nothing else does. One batched write per run, never per tab
+- Near-duplicates read raw embeddings, deliberately bypassing the structural factors, or same-domain tabs would register as duplicates of each other on shape alone
 
 ## Notes
 

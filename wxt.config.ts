@@ -20,9 +20,23 @@ export default defineConfig({
       "sidePanel",
       "alarms",
       "storage",
+      "unlimitedStorage",
       "scripting",
     ],
-    host_permissions: ["*://github.com/*"],
+    host_permissions: [
+      "*://github.com/*",
+      // One-time download of the embedding model on first triage run. Weights
+      // are cached by the browser afterward, so this is never hit again.
+      "https://huggingface.co/*",
+      "https://*.hf.co/*",
+    ],
+    // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
+    // default extension CSP omits wasm-unsafe-eval, and this is the most
+    // permissive policy MV3 allows.
+    content_security_policy: {
+      extension_pages:
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+    },
     commands: {
       "copy-tabs": {
         suggested_key: {
@@ -65,6 +79,9 @@ export default defineConfig({
       "close-stale-github-tabs": {
         description:
           "Close merged/closed PR tabs, /pulls list pages, and workflow run pages for the configured GitHub owners",
+      },
+      "triage-tabs": {
+        description: "Open the tab triage page (semantic clusters)",
       },
     },
   },

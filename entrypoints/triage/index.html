@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab triage</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="titlebar">
+        <h1>Tab triage</h1>
+        <div class="stats" id="stats"></div>
+        <button id="rescan" class="ghost">Rescan</button>
+      </div>
+
+      <div class="granularity" id="granularity" hidden>
+        <label for="cut">Granularity</label>
+        <span class="end">tight</span>
+        <input id="cut" type="range" min="0" max="1000" value="500" />
+        <span class="end">broad</span>
+        <span class="readout" id="cut-readout"></span>
+      </div>
+    </header>
+
+    <div id="progress" class="progress">
+      <div class="progress-label" id="progress-label">Starting…</div>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+      <p class="progress-note" id="progress-note"></p>
+    </div>
+
+    <main id="clusters"></main>
+
+    <section id="dupes" class="dupes" hidden></section>
+
+    <footer id="selection" class="selection" hidden>
+      <span id="selection-count"></span>
+      <button id="selection-close" class="danger">Close selected</button>
+      <button id="selection-clear" class="ghost">Clear</button>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

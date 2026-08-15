@@ -1,0 +1,23 @@
+{
+  "name": "chrome-tab-utilities",
+  "version": "1.0.0",
+  "description": "Keyboard shortcuts and popup actions for copy/paste tab URLs, group tabs by domain, sort tabs, close duplicate tabs, merge windows, and split tabs into a new window",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip"
+  },
+  "keywords": [],
+  "author": "Beau Gunderson <beau@beaugunderson.com> (https://beaugunderson.com/)",
+  "license": "MIT",
+  "packageManager": "pnpm@10.30.1",
+  "devDependencies": {
+    "@types/chrome": "^0.1.40",
+    "typescript": "^6.0.2",
+    "wxt": "^0.20.20"
+  },
+  "dependencies": {
+    "tldts": "^7.0.28"
+  }
+}

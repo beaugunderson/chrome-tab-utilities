@@ -1,0 +1,170 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --hover: #f6f8fa;
+  --active-bg: #eef2ff;
+  --border: #d1d9e0;
+  --accent: #764ba2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1f23;
+    --fg: #f0f6fc;
+    --muted: #9198a1;
+    --hover: #262c33;
+    --active-bg: #2d2a4a;
+    --border: #30363d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+#tabs {
+  height: 100vh;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  margin: 10px 2px 2px;
+  background: color-mix(in srgb, var(--group-color) 16%, transparent);
+  color: var(--group-color);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.group-header:hover {
+  background: color-mix(in srgb, var(--group-color) 26%, transparent);
+}
+
+.group-chevron {
+  font-size: 8px;
+  width: 8px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.group-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-count {
+  opacity: 0.7;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.tab.in-group {
+  margin-left: 14px;
+  padding-left: 8px;
+}
+
+.tab:hover {
+  background: var(--hover);
+}
+
+.tab.active {
+  background: var(--active-bg);
+  border-color: var(--border);
+}
+
+.tab .favicon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.tab .title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab.loading .title {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tab .pin-indicator,
+.tab .audio-indicator {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.tab .audio-indicator.muted {
+  opacity: 0.5;
+}
+
+.tab .close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 80ms ease;
+}
+
+.tab:hover .close,
+.tab.active .close,
+.tab .close:focus-visible {
+  opacity: 1;
+}
+
+.tab .close:hover {
+  background: var(--hover);
+  color: var(--fg);
+}

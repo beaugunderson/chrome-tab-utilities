@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Tools options</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Tab Tools</h1>
+      <label class="field">
+        <span class="name">GitHub owners</span>
+        <span class="hint">
+          One user or organization per line. "Close stale GitHub tabs" only
+          touches tabs under these owners.
+        </span>
+        <textarea id="orgs" rows="6" spellcheck="false" autocapitalize="off"
+placeholder="my-org
+my-username"></textarea>
+      </label>
+      <p class="status" id="status" role="status"></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

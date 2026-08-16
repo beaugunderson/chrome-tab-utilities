@@ -415,6 +415,15 @@ try {
     failures.push("unidentified section says to read them but offers no button");
   }
 
+  // The section has to say why the last attempt came to nothing, next to the
+  // tabs rather than in the header where it gets lost.
+  const diagnosis = await triage.$$eval("#unknown .note", (n) =>
+    n.map((x) => x.textContent ?? ""),
+  );
+  if (!diagnosis.some((t) => /been read yet|Last attempt:/.test(t))) {
+    failures.push(`unidentified section reports no read outcome: ${JSON.stringify(diagnosis)}`);
+  }
+
   const clusteredBare = await triage.$$eval("main .tab-title", (rows) =>
     rows.filter((r) => (r.textContent ?? "").includes("/bare-")).length,
   );

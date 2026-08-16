@@ -37,6 +37,13 @@ export interface TabRecord {
    * different fixes.
    */
   metaOutcome?: "text" | "title" | "empty" | "timeout";
+  /**
+   * Whatever the page reported as its title on the last attempt, kept even
+   * when it was rejected as a placeholder. Purely diagnostic: without it, a
+   * page that reports nothing and a page that reports "X" forever are
+   * indistinguishable from the outside.
+   */
+  lastTitleSeen?: string;
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

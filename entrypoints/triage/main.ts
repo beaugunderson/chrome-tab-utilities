@@ -295,6 +295,7 @@ async function harvestTabs(
       ...(records.get(url) ?? {}),
       metaTried: now,
       metaOutcome: outcome,
+      ...(caught?.title ? { lastTitleSeen: caught.title.slice(0, 120) } : {}),
       ...(gotMeta ? { meta: caught!.meta } : {}),
       ...(gotTitle ? { title: caught!.title } : {}),
     };
@@ -1397,7 +1398,7 @@ function renderUnidentified() {
     await run();
   });
 
-  host.append(heading, note, readAll);
+  host.append(heading, note, readAll, unidentifiedDiagnosis(live));
 
   const byHost = new Map<string, TriageTab[]>();
   for (const tab of live) {
@@ -1441,6 +1442,56 @@ function renderUnidentified() {
 
 /** Ids closed out of the unidentified list, which has no leaf indices. */
 const unidentifiedClosed = new Set<number>();
+
+const OUTCOME_WORDING: Record<string, string> = {
+  timeout: "never finished loading",
+  empty: "loaded but said nothing about themselves",
+  title: "gave only a title",
+  text: "gave page text",
+};
+
+/**
+ * Why the last read attempt on these tabs came to nothing.
+ *
+ * Reported next to the tabs rather than in the header, and read back from the
+ * stored records rather than a counter, so it survives a reload. Without it a
+ * disappointing result is just a number that barely moved, and the four
+ * outcomes need entirely different responses: a timeout means waiting longer
+ * could help, "said nothing" means no amount of waiting will.
+ */
+function unidentifiedDiagnosis(live: TriageTab[]): HTMLElement {
+  const line = document.createElement("p");
+  line.className = "note";
+
+  const counts = new Map<string, number>();
+  const samples: string[] = [];
+  let untried = 0;
+  for (const tab of live) {
+    const record = state!.records.get(tab.url);
+    if (!record?.metaOutcome) {
+      untried++;
+      continue;
+    }
+    counts.set(record.metaOutcome, (counts.get(record.metaOutcome) ?? 0) + 1);
+    if (record.lastTitleSeen && samples.length < 3) samples.push(record.lastTitleSeen);
+  }
+
+  if (counts.size === 0 && untried === live.length) {
+    line.textContent = "None of these have been read yet.";
+    return line;
+  }
+
+  const parts = [...counts].map(
+    ([outcome, n]) => `${n} ${OUTCOME_WORDING[outcome] ?? outcome}`,
+  );
+  if (untried > 0) parts.push(`${untried} not tried yet`);
+  line.textContent =
+    `Last attempt: ${parts.join(", ")}.` +
+    (samples.length > 0
+      ? ` They reported titles like: ${samples.map((s) => `“${s}”`).join(", ")}.`
+      : "");
+  return line;
+}
 
 function renderDuplicates() {
   const host = el("dupes");

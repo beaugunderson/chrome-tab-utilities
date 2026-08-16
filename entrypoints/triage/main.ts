@@ -10,6 +10,7 @@ import {
   type Merge,
   collectMembers,
   cutTreeInconsistent,
+  defaultThreshold,
   distanceMatrix,
   dot,
   inconsistencies,
@@ -35,13 +36,6 @@ import { removeTabs } from "../../lib/tabs";
 import { domainKey, hostOf } from "../../lib/url";
 
 const NEAR_DUPLICATE_SIMILARITY = 0.95;
-/**
- * Where the slider starts, as an inconsistency value rather than a fixed
- * position. 1.15 is scipy's long-standing default for this criterion, and
- * anchoring to the value rather than to a slider position means the opening
- * view is the same kind of cut whether there are 40 tabs or 900.
- */
-const DEFAULT_INCONSISTENCY = 1.15;
 const TAG_SUGGEST_SIMILARITY = 0.8;
 // Quantile of a subtree's own merge heights used when drilling into it.
 const SUB_CUT_QUANTILE = 0.6;
@@ -87,6 +81,8 @@ interface TriageTab {
   groupId: number | null;
   idleMs: number;
   tags: string[];
+  /** Harvested heading with site boilerplate removed; used for labels. */
+  heading?: string;
   vec: Float32Array;
 }
 
@@ -251,7 +247,7 @@ async function harvestDiscarded(
   const started = performance.now();
 
   await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
-    const caught = await reloadAndCapture(tab.id!);
+    const caught = await reloadAndCapture(tab.id!, tab.url!);
     // The attempt is recorded whether or not anything came back. Plenty of
     // pages carry no description, og tags or h1 at all, and without this they
     // would be reloaded again on every future pass forever.
@@ -331,6 +327,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
  */
 function reloadAndCapture(
   tabId: number,
+  url: string,
 ): Promise<{ url: string; meta: PageMeta } | null> {
   return new Promise((resolve) => {
     let current = tabId;
@@ -370,7 +367,13 @@ function reloadAndCapture(
     awaitingMeta.set(current, capture);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onReplaced.addListener(onReplaced);
-    chrome.tabs.reload(current).catch(() => finish(null));
+    // Navigate to the URL rather than reload(). Reloading a page that arrived
+    // via POST re-submits the form, which puts up Chrome's "Confirm Form
+    // Resubmission" interstitial and stalls the tab until the timeout. A fresh
+    // navigation is a plain GET, so the prompt never appears — and re-sending
+    // someone's form just to read a meta tag would be the wrong thing to do
+    // regardless.
+    chrome.tabs.update(current, { url }).catch(() => finish(null));
   });
 }
 
@@ -408,12 +411,19 @@ async function run() {
 
   // Decide what needs embedding: anything with no cached vector, or whose
   // title, harvested metadata or tags have changed since it was embedded.
-  const sources = raw.map((t) => ({
-    title: t.title,
-    url: t.url,
-    meta: records.get(t.url!)?.meta,
-    tags: records.get(t.url!)?.tags,
-  }));
+  const boilerplate = boilerplateHeadings(raw, records);
+  const sources = raw.map((t) => {
+    const record = records.get(t.url!);
+    return {
+      title: t.title,
+      url: t.url,
+      meta: record?.meta && {
+        ...record.meta,
+        heading: usableHeading(t.url!, record, boilerplate),
+      },
+      tags: record?.tags,
+    };
+  });
   const fingerprints = sources.map(featureFingerprint);
   const stale: number[] = [];
   for (let i = 0; i < raw.length; i++) {
@@ -479,6 +489,7 @@ async function run() {
       groupId: t.groupId !== undefined && t.groupId >= 0 ? t.groupId : null,
       idleMs: lastSeen > 0 ? now - lastSeen : Number.POSITIVE_INFINITY,
       tags: record.tags ?? [],
+      heading: usableHeading(urls[i], record, boilerplate),
       vec: dequantize(record.v),
     });
   }
@@ -523,7 +534,10 @@ async function run() {
 
   hideProgress();
   el("granularity").hidden = false;
-  parkSliderAt(previousThreshold ?? DEFAULT_INCONSISTENCY);
+  parkSliderAt(
+    previousThreshold ??
+      defaultThreshold(merges, tabs.length, maxScores, state.scale),
+  );
   render();
   offerBacklog(raw, records);
 }
@@ -559,6 +573,52 @@ function isUnidentified(
   // Chrome's placeholder is the URL, sometimes with the scheme stripped.
   const bare = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
   return trimmed === url || trimmed === bare;
+}
+
+/** A heading this many tabs of one site share is the site's furniture. */
+const BOILERPLATE_HEADING_COUNT = 3;
+
+/**
+ * Headings that are part of a site rather than a page, found by counting.
+ *
+ * No per-site rules and no re-harvest needed: if three pages on one host claim
+ * the same heading it describes the host, not any of them. Catches the hidden
+ * "Command palette" already cached for 73 GitHub tabs, and site banners like a
+ * blog's own name repeated on every post.
+ */
+function boilerplateHeadings(
+  tabs: chrome.tabs.Tab[],
+  records: Map<string, TabRecord>,
+): Set<string> {
+  const counts = new Map<string, number>();
+  for (const tab of tabs) {
+    const heading = records.get(tab.url!)?.meta?.heading?.trim();
+    if (!heading) continue;
+    const key = `${hostOf(tab.url!) ?? ""}|${heading.toLowerCase()}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const out = new Set<string>();
+  for (const [key, count] of counts) {
+    if (count >= BOILERPLATE_HEADING_COUNT) out.add(key);
+  }
+  return out;
+}
+
+function usableHeading(
+  url: string,
+  record: TabRecord | undefined,
+  boilerplate: Set<string>,
+): string | undefined {
+  const heading = record?.meta?.heading?.trim();
+  if (!heading) return undefined;
+  const host = hostOf(url) ?? "";
+  if (boilerplate.has(`${host}|${heading.toLowerCase()}`)) return undefined;
+  // A heading that is just the site's name says nothing about the page.
+  const compact = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (compact(heading) === compact(host)) return undefined;
+  const siteName = record?.meta?.siteName;
+  if (siteName && compact(heading) === compact(siteName)) return undefined;
+  return heading;
 }
 
 /** Merge overlapping duplicate pairs into groups via union-find. */
@@ -708,9 +768,7 @@ function labelSources(leaves: number[]): LabelSource[] {
     const tab = state!.tabs[i];
     const record = state!.records.get(tab.url);
     return {
-      text: [tab.title, record?.meta?.heading, tab.tags.join(" ")]
-        .filter(Boolean)
-        .join(" "),
+      text: [tab.title, tab.heading, tab.tags.join(" ")].filter(Boolean).join(" "),
       site: tab.host,
     };
   });
@@ -1368,6 +1426,68 @@ function renderSelection() {
   el("selection-count").textContent = `${count} tab${count === 1 ? "" : "s"} selected`;
 }
 
+// ===== Export =====
+
+/**
+ * The current view as data, for judging clustering quality outside the browser.
+ * Membership is the thing worth inspecting: a label can read plausibly over a
+ * cluster that makes no sense.
+ */
+function exportSnapshot() {
+  if (!state) return { tabs: 0, clusters: [] };
+  const threshold = currentThreshold();
+  const context: RenderContext = {
+    members: collectMembers(state.merges, state.tabs.length),
+    dupeIndices: new Set(state.dupeGroups.flat()),
+  };
+  const ranked = rank(
+    cutTreeInconsistent(
+      state.merges,
+      state.tabs.length,
+      threshold,
+      state.maxScores,
+      context.members,
+    ),
+    context,
+  );
+
+  return {
+    generated: new Date().toISOString(),
+    tabs: state.tabs.length - state.removed.size,
+    threshold,
+    withMeta: state.withMeta,
+    clusters: ranked.map((entry) => ({
+      label: entry.label,
+      size: entry.tabs.length,
+      idleDays: Math.round(medianIdleDays(entry.tabs)),
+      duplicates: entry.dupes,
+      tabs: entry.tabs.map((t) => ({
+        title: t.title,
+        url: t.url,
+        host: t.host,
+        heading: t.heading,
+        idleDays: Math.round(idleDays(t)),
+        tags: t.tags,
+      })),
+    })),
+    unidentified: state.unidentified
+      .filter((t) => !unidentifiedClosed.has(t.id))
+      .map((t) => ({ title: t.title, url: t.url, host: t.host })),
+    nearDuplicates: state.dupeGroups.map((group) =>
+      group.map((i) => ({ title: state!.tabs[i].title, url: state!.tabs[i].url })),
+    ),
+  };
+}
+
+async function copyOut(text: string, button: HTMLElement) {
+  await navigator.clipboard.writeText(text);
+  const original = button.textContent;
+  button.textContent = "Copied";
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1200);
+}
+
 // ===== Wiring =====
 
 /** Every visible cluster node, so "collapse all" reaches sub-clusters too. */
@@ -1420,6 +1540,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (!state) return;
   forgetTabs([tabId]);
   scheduleRender();
+});
+
+el("copy-json").addEventListener("click", (e) => {
+  void copyOut(
+    JSON.stringify(exportSnapshot(), null, 2),
+    e.currentTarget as HTMLElement,
+  );
 });
 
 el("cut").addEventListener("input", scheduleRender);

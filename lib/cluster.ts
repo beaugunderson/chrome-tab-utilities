@@ -424,6 +424,57 @@ export function sortedInconsistencies(maxScores: Float64Array): number[] {
   return unique;
 }
 
+/** Largest share of all tabs one cluster may hold at the opening cut. */
+const DEFAULT_LARGEST_SHARE = 0.1;
+/** Floor for that cap, so a small tab set does not collapse to one group. */
+const DEFAULT_LARGEST_FLOOR = 6;
+
+/**
+ * The opening cut: the coarsest threshold at which no cluster has swallowed
+ * more than a tenth of the tabs.
+ *
+ * A fixed inconsistency value cannot do this job. Measured on a real 704-tab
+ * set, scipy's usual 1.15 produced 275 clusters with a median size of 2, which
+ * is a list nobody can triage; the useful range there was nearer 1.55. Where
+ * that range falls depends on the tab set, so it has to be found rather than
+ * guessed. Going as coarse as the cap allows keeps the number of groups down,
+ * and the cap is what stops it collapsing into one heap.
+ *
+ * Cluster size grows monotonically with the threshold, so this binary searches.
+ */
+export function defaultThreshold(
+  merges: Merge[],
+  n: number,
+  maxScores: Float64Array,
+  scale: number[],
+): number {
+  if (scale.length === 0) return 0;
+  const cap = Math.max(Math.round(DEFAULT_LARGEST_SHARE * n), DEFAULT_LARGEST_FLOOR);
+  const members = collectMembers(merges, n);
+
+  const largestAt = (threshold: number) => {
+    let largest = 0;
+    for (const cluster of cutTreeInconsistent(merges, n, threshold, maxScores, members)) {
+      if (cluster.leaves.length > largest) largest = cluster.leaves.length;
+    }
+    return largest;
+  };
+
+  let low = 0;
+  let high = scale.length - 1;
+  let best = 0;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (largestAt(scale[mid]) <= cap) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return scale[best];
+}
+
 /**
  * Index pairs whose cosine similarity is at or above `threshold`.
  *

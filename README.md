@@ -31,6 +31,8 @@ The **granularity slider** slices that tree. Drag toward "tight" for many small,
 
 The slice is by *inconsistency* rather than by a fixed distance: a merge counts as a real boundary when it stands well above the merges beneath it, whatever its absolute size. This matters because a tight topic and a sprawling one join up at completely different distances, so any single distance threshold either shreds the sprawling topic or fuses the tight ones into it.
 
+The view opens at a granularity chosen from your own tabs: the coarsest cut where no single cluster has swallowed more than a tenth of them. A fixed setting cannot do this, since where the useful range sits depends on the set.
+
 Everything starts expanded, including sub-clusters and clusters that only appear as you move the slider. "Collapse all" folds the lot; individual collapses stick.
 
 - Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
@@ -42,6 +44,7 @@ Everything starts expanded, including sub-clusters and clusters that only appear
 - Selecting every tab in a group ticks the group itself; ticking some leaves it partially filled. Nesting works the same way up the tree.
 - Closing tabs never re-clusters. Closed tabs drop out and everything else stays exactly where it was, so working down the page doesn't move the ground under you. "Rescan" is the deliberate way to recluster, and it holds your granularity across the rebuild.
 - **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.
+- **Copy JSON** dumps the clusters with full membership, for judging the grouping outside the browser.
 - Pinned, blank, and new-tab pages are excluded. Nothing is written to a real tab until you press an action.
 
 Everything runs locally. The model weights (~25MB) download from the Hugging Face CDN on first run and are cached by the browser; no tab data leaves the machine. Embeddings are cached per URL as int8 vectors and only recomputed when a tab's title, metadata, or tags change.

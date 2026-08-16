@@ -5,6 +5,7 @@ import {
   collectMembers,
   cutTree,
   cutTreeInconsistent,
+  defaultThreshold,
   distanceMatrix,
   heightRange,
   inconsistencies,
@@ -412,6 +413,50 @@ describe("inconsistency-based cutting", () => {
     const range = sortedInconsistencies(maxScores);
     expect(range.length).toBeGreaterThan(1);
     expect(range).toEqual([...range].sort((a, b) => a - b));
+  });
+});
+
+describe("defaultThreshold", () => {
+  // One broad topic of six plus two tight pairs: the coarsest sensible cut
+  // keeps the six together, and anything coarser starts fusing the pairs in.
+  const angles = [0, 3, 6, 9, 12, 15, 120, 123, 240, 243];
+  const items = angles.map((a) => plain(onCircle(a)));
+  const n = items.length;
+  const merges = linkage(distanceMatrix(items), n);
+  const maxScores = maxInconsistencies(merges, n, inconsistencies(merges, n));
+  const scale = sortedInconsistencies(maxScores);
+
+  it("keeps the largest cluster under the cap", () => {
+    const threshold = defaultThreshold(merges, n, maxScores, scale);
+    const sizes = cutTreeInconsistent(merges, n, threshold, maxScores).map(
+      (c) => c.leaves.length,
+    );
+    // Cap is max(10% of 10, 6) = 6.
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(6);
+  });
+
+  it("is the coarsest such threshold, not merely a safe one", () => {
+    const threshold = defaultThreshold(merges, n, maxScores, scale);
+    const chosen = cutTreeInconsistent(merges, n, threshold, maxScores).length;
+    // Every coarser threshold must breach the cap, or this was not the coarsest.
+    for (const higher of scale.filter((t) => t > threshold)) {
+      const sizes = cutTreeInconsistent(merges, n, higher, maxScores).map(
+        (c) => c.leaves.length,
+      );
+      expect(Math.max(...sizes)).toBeGreaterThan(6);
+    }
+    expect(chosen).toBeLessThan(n);
+  });
+
+  it("does not shatter the set into singletons", () => {
+    const threshold = defaultThreshold(merges, n, maxScores, scale);
+    const clusters = cutTreeInconsistent(merges, n, threshold, maxScores);
+    const singles = clusters.filter((c) => c.leaves.length === 1).length;
+    expect(singles).toBeLessThan(clusters.length);
+  });
+
+  it("survives an empty scale", () => {
+    expect(defaultThreshold([], 0, new Float64Array(0), [])).toBe(0);
   });
 });
 

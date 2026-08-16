@@ -38,8 +38,32 @@ function jsonLdType(): string | undefined {
   return undefined;
 }
 
+/**
+ * The first *visible* h1.
+ *
+ * Taking `querySelector("h1")` blindly picks up hidden accessibility and
+ * skip-link headings: on a real 794-tab set, 73 pages reported their heading
+ * as "Command palette", which is GitHub's hidden dialog title. That is pure
+ * noise in both the embedding and the cluster label, and it makes every page
+ * on such a site look alike.
+ */
+function visibleHeading(): string | undefined {
+  for (const el of document.querySelectorAll("h1")) {
+    if (el.closest("[hidden], [aria-hidden='true']")) continue;
+    const text = el.textContent?.trim();
+    if (!text) continue;
+    // offsetParent is null for display:none; the rect catches clip/zero-size
+    // tricks that screen-reader-only styles use.
+    if ((el as HTMLElement).offsetParent === null) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.height < 4 || rect.width < 4) continue;
+    return text;
+  }
+  return undefined;
+}
+
 function harvest(): PageMeta {
-  const heading = document.querySelector("h1")?.textContent?.trim();
+  const heading = visibleHeading();
   return {
     description:
       attr('meta[name="description"]') ?? attr('meta[property="og:description"]'),

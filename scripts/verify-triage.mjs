@@ -96,9 +96,12 @@ setTimeout(() => {
 }, ${SPA_RENDER_MS});
 </script></body></html>`,
   ]),
+  // Served with the site name as a placeholder title, replaced by the real one
+  // only once the app renders. This is what x.com does, and a lenient check
+  // treats the placeholder as a real title and gives up immediately.
   ...TITLE_ONLY_PAGES.map(([slug, title]) => [
     `/${slug}`,
-    `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+    `<!doctype html><html><head><meta charset="utf-8"><title>localhost</title></head><body><script>
 setTimeout(() => { document.title = ${JSON.stringify(title)}; }, ${SPA_RENDER_MS});
 </script></body></html>`,
   ]),

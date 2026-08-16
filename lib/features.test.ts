@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { cleanTitle, featureFingerprint, featureText, pathTokens } from "./features";
+import {
+  cleanTitle,
+  featureFingerprint,
+  featureText,
+  isRealTitle,
+  pathTokens,
+} from "./features";
 
 describe("pathTokens", () => {
   it("splits a path into words and drops plumbing segments", () => {
@@ -183,5 +189,39 @@ describe("cleanTitle", () => {
       meta: { siteName: "The Verge" },
     });
     expect(text.split("\n")[0]).toBe("Ceasefire talks resume");
+  });
+});
+
+describe("isRealTitle", () => {
+  it("rejects a site's bare name, however it is cased", () => {
+    // x.com serves "X" until its app renders. Treating that as a real title
+    // made the harvest report instantly and discard before the post appeared.
+    expect(isRealTitle("X", "https://x.com/someone/status/123")).toBe(false);
+    expect(isRealTitle("x", "https://x.com/someone/status/123")).toBe(false);
+    expect(isRealTitle("GitHub", "https://github.com/o/r")).toBe(false);
+    expect(isRealTitle("Reddit", "https://reddit.com/r/x")).toBe(false);
+  });
+
+  it("rejects the URL shown in place of a title", () => {
+    const url = "https://example.com/a/b";
+    expect(isRealTitle(url, url)).toBe(false);
+    expect(isRealTitle("example.com/a/b", url)).toBe(false);
+  });
+
+  it("rejects a fragment of the URL regardless of case", () => {
+    expect(isRealTitle("Status", "https://x.com/someone/status/123")).toBe(false);
+  });
+
+  it("accepts a title the page actually set", () => {
+    expect(
+      isRealTitle('Matt on X: "koji on barley"', "https://x.com/matt/status/1"),
+    ).toBe(true);
+    expect(isRealTitle("Ceasefire talks resume", "https://news.local/a")).toBe(true);
+  });
+
+  it("rejects empty and near-empty titles", () => {
+    expect(isRealTitle(undefined, "https://e.com/a")).toBe(false);
+    expect(isRealTitle("  ", "https://e.com/a")).toBe(false);
+    expect(isRealTitle("ab", "https://e.com/a")).toBe(false);
   });
 });

@@ -30,6 +30,13 @@ export interface TabRecord {
    * forever.
    */
   metaTried?: number;
+  /**
+   * How the last harvest of this page ended. Kept because a disappointing
+   * result is otherwise indistinguishable between "the page says nothing",
+   * "it had not rendered yet" and "no content script ran", and those need
+   * different fixes.
+   */
+  metaOutcome?: "text" | "title" | "empty" | "timeout";
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

@@ -59,9 +59,16 @@ const HARVEST_CONCURRENCY = 8;
 // only has to cover a slow server, not a slow page. Measured: a page with one
 // slow asset never reported `status: "complete"` within 15s while its metadata
 // was ready at 34ms — waiting on the load event is what made this crawl.
-const HARVEST_LOAD_TIMEOUT_MS = 8000;
+const HARVEST_LOAD_TIMEOUT_MS = 20000;
 // A page that yielded nothing is not asked again for this long. It might have
 // been down or behind a login rather than genuinely empty.
+interface HarvestOutcome {
+  read: number;
+  titleOnly: number;
+  empty: number;
+  timedOut: number;
+}
+
 const HARVEST_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
@@ -241,7 +248,7 @@ async function backfillMeta(
 async function harvestDiscarded(
   tabs: chrome.tabs.Tab[],
   records: Map<string, TabRecord>,
-): Promise<{ read: number; titleOnly: number; empty: number }> {
+): Promise<HarvestOutcome> {
   return harvestTabs(
     harvestTargets(tabs, records).map((t) => ({ id: t.id!, url: t.url! })),
     records,
@@ -252,8 +259,9 @@ async function harvestDiscarded(
 async function harvestTabs(
   targets: Array<{ id: number; url: string }>,
   records: Map<string, TabRecord>,
-): Promise<{ read: number; titleOnly: number; empty: number }> {
-  if (targets.length === 0) return { read: 0, titleOnly: 0, empty: 0 };
+): Promise<HarvestOutcome> {
+  if (targets.length === 0)
+    return { read: 0, titleOnly: 0, empty: 0, timedOut: 0 };
 
   const updates = new Map<string, TabRecord>();
   const now = Date.now();
@@ -261,6 +269,7 @@ async function harvestTabs(
   let withText = 0;
   let titleOnly = 0;
   let empty = 0;
+  let timedOut = 0;
 
   const started = performance.now();
   // Say something before the first tab finishes, or the click looks inert.
@@ -275,9 +284,17 @@ async function harvestTabs(
     const url = caught?.url ?? tab.url;
     const gotMeta = hasMetaContent(caught?.meta);
     const gotTitle = isRealTitle(caught?.title, url);
+    const outcome = gotMeta
+      ? ("text" as const)
+      : gotTitle
+        ? ("title" as const)
+        : caught
+          ? ("empty" as const)
+          : ("timeout" as const);
     const record: TabRecord = {
       ...(records.get(url) ?? {}),
       metaTried: now,
+      metaOutcome: outcome,
       ...(gotMeta ? { meta: caught!.meta } : {}),
       ...(gotTitle ? { title: caught!.title } : {}),
     };
@@ -285,9 +302,10 @@ async function harvestTabs(
     updates.set(url, record);
     // A title alone is a real result: on a JS app it is often the only thing
     // the page ever exposes, and it is enough to cluster on.
-    if (gotMeta) withText++;
-    else if (gotTitle) titleOnly++;
-    else empty++;
+    if (outcome === "text") withText++;
+    else if (outcome === "title") titleOnly++;
+    else if (outcome === "empty") empty++;
+    else timedOut++;
     done++;
     const rate = done / ((performance.now() - started) / 1000);
     const left = Math.round((targets.length - done) / Math.max(rate, 0.01));
@@ -299,7 +317,7 @@ async function harvestTabs(
   });
 
   await saveRecords(updates);
-  return { read: withText + titleOnly, titleOnly, empty };
+  return { read: withText + titleOnly, titleOnly, empty, timedOut };
 }
 
 /**

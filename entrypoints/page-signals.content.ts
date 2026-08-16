@@ -6,17 +6,14 @@
 //    often truncated or generic, and this is what lets a pile of news tabs
 //    separate by story rather than by publisher.
 
-interface PageMeta {
-  description?: string;
-  siteName?: string;
-  section?: string;
-  ogType?: string;
-  heading?: string;
-}
+import { type PageMeta, isRealTitle } from "../lib/features";
 
 const MAX_FIELD_LENGTH = 400;
 /** How long to keep watching a page that had nothing at DOMContentLoaded. */
-const SETTLE_TIMEOUT_MS = 5000;
+// Generous, because only pages that never say anything wait this long: any
+// page with a title or a description reports the moment it has one. A heavy JS
+// app under a concurrent harvest can take well over five seconds to render.
+const SETTLE_TIMEOUT_MS = 15000;
 const SETTLE_POLL_MS = 250;
 
 function attr(selector: string, attribute = "content"): string | undefined {
@@ -141,11 +138,12 @@ export default defineContentScript({
     const hasSomething = (meta: PageMeta) =>
       Boolean(meta.description || meta.heading || meta.section);
 
-    /** A title the page set itself, rather than Chrome showing the URL. */
-    const hasRealTitle = () => {
-      const title = document.title.trim();
-      return Boolean(title) && !location.href.includes(title);
-    };
+    /**
+     * A title the page set itself, rather than a placeholder. Shares its
+     * definition with the rest of the extension so the content script cannot
+     * decide it is done on a title the store will then reject.
+     */
+    const hasRealTitle = () => isRealTitle(document.title, location.href);
 
     /**
      * Report as soon as there is something to report, and keep looking for a

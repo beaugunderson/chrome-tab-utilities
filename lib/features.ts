@@ -9,6 +9,14 @@ export interface PageMeta {
   heading?: string;
 }
 
+/** Whether a title says more than the address already does. */
+export function isRealTitle(title: string | undefined, url: string): boolean {
+  const trimmed = (title ?? "").trim();
+  if (!trimmed) return false;
+  const bare = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return trimmed !== url && trimmed !== bare && !url.includes(trimmed);
+}
+
 /** Whether harvested metadata says anything about the page. */
 export function hasMetaContent(meta: PageMeta | undefined): boolean {
   if (!meta) return false;

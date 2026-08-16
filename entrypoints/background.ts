@@ -1,7 +1,7 @@
 import { parse as parseTld } from "tldts";
-import { type PageMeta, hasMetaContent } from "../lib/features";
+import { type PageMeta, hasMetaContent, isRealTitle } from "../lib/features";
 import { type DiscardPolicy, selectDiscardCandidates } from "../lib/discard";
-import { patchRecord } from "../lib/store";
+import { type TabRecord, patchRecord } from "../lib/store";
 import { removeTabs } from "../lib/tabs";
 import { domainKey } from "../lib/url";
 
@@ -137,6 +137,7 @@ interface PopupMessage {
 interface PageMetaMessage {
   type: "page-meta";
   url: string;
+  title?: string;
   meta: PageMeta;
 }
 
@@ -144,10 +145,13 @@ async function handlePopupMessage(msg: PopupMessage | unknown) {
   if (typeof msg !== "object" || msg === null || !("type" in msg)) return;
 
   if ((msg as PageMetaMessage).type === "page-meta") {
-    const { url, meta } = msg as PageMetaMessage;
+    const { url, title, meta } = msg as PageMetaMessage;
+    const patch: Partial<TabRecord> = {};
     // An empty payload only means the page had nothing; storing it would look
     // like the page had been read.
-    if (hasMetaContent(meta)) await patchRecord(url, { meta });
+    if (hasMetaContent(meta)) patch.meta = meta;
+    if (isRealTitle(title, url)) patch.title = title;
+    if (Object.keys(patch).length > 0) await patchRecord(url, patch);
     return { ok: true };
   }
 

@@ -123,10 +123,18 @@ export default defineContentScript({
     });
 
     const send = (meta: PageMeta, final: boolean) => {
-      // The background may be asleep, and a dropped harvest is not worth
-      // retrying: the next visit re-sends it.
+      // The title travels with the metadata. On a JS app it is often the only
+      // thing worth having — x.com puts the whole post in it — and relying on
+      // Chrome's copy does not work, because the tab is discarded moments after
+      // the app sets it. Captured here, it is ours.
       void chrome.runtime
-        .sendMessage({ type: "page-meta", url: location.href, meta, final })
+        .sendMessage({
+          type: "page-meta",
+          url: location.href,
+          title: document.title,
+          meta,
+          final,
+        })
         .catch(() => {});
     };
 

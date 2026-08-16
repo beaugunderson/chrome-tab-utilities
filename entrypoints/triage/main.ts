@@ -27,6 +27,7 @@ import {
   featureFingerprint,
   featureText,
   hasMetaContent,
+  isRealTitle,
 } from "../../lib/features";
 import { type LabelSource, labelClusters } from "../../lib/label";
 import {
@@ -240,7 +241,7 @@ async function backfillMeta(
 async function harvestDiscarded(
   tabs: chrome.tabs.Tab[],
   records: Map<string, TabRecord>,
-): Promise<{ read: number; empty: number }> {
+): Promise<{ read: number; titleOnly: number; empty: number }> {
   return harvestTabs(
     harvestTargets(tabs, records).map((t) => ({ id: t.id!, url: t.url! })),
     records,
@@ -251,12 +252,14 @@ async function harvestDiscarded(
 async function harvestTabs(
   targets: Array<{ id: number; url: string }>,
   records: Map<string, TabRecord>,
-): Promise<{ read: number; empty: number }> {
-  if (targets.length === 0) return { read: 0, empty: 0 };
+): Promise<{ read: number; titleOnly: number; empty: number }> {
+  if (targets.length === 0) return { read: 0, titleOnly: 0, empty: 0 };
 
   const updates = new Map<string, TabRecord>();
   const now = Date.now();
   let done = 0;
+  let withText = 0;
+  let titleOnly = 0;
   let empty = 0;
 
   const started = performance.now();
@@ -270,14 +273,21 @@ async function harvestTabs(
     // pages carry no description, og tags or h1 at all, and without this they
     // would be reloaded again on every future pass forever.
     const url = caught?.url ?? tab.url;
+    const gotMeta = hasMetaContent(caught?.meta);
+    const gotTitle = isRealTitle(caught?.title, url);
     const record: TabRecord = {
       ...(records.get(url) ?? {}),
       metaTried: now,
-      ...(hasMetaContent(caught?.meta) ? { meta: caught!.meta } : {}),
+      ...(gotMeta ? { meta: caught!.meta } : {}),
+      ...(gotTitle ? { title: caught!.title } : {}),
     };
     records.set(url, record);
     updates.set(url, record);
-    if (!hasMetaContent(caught?.meta)) empty++;
+    // A title alone is a real result: on a JS app it is often the only thing
+    // the page ever exposes, and it is enough to cluster on.
+    if (gotMeta) withText++;
+    else if (gotTitle) titleOnly++;
+    else empty++;
     done++;
     const rate = done / ((performance.now() - started) / 1000);
     const left = Math.round((targets.length - done) / Math.max(rate, 0.01));
@@ -289,7 +299,7 @@ async function harvestTabs(
   });
 
   await saveRecords(updates);
-  return { read: updates.size - empty, empty };
+  return { read: withText + titleOnly, titleOnly, empty };
 }
 
 /**
@@ -326,12 +336,16 @@ function formatDuration(seconds: number): string {
  */
 const awaitingMeta = new Map<
   number,
-  (result: { url: string; meta: PageMeta }) => void
+  (result: { url: string; title?: string; meta: PageMeta }) => void
 >();
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.type !== "page-meta" || sender.tab?.id === undefined) return;
-  awaitingMeta.get(sender.tab.id)?.({ url: msg.url, meta: msg.meta });
+  awaitingMeta.get(sender.tab.id)?.({
+    url: msg.url,
+    title: msg.title,
+    meta: msg.meta,
+  });
 });
 
 /**
@@ -349,12 +363,12 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 function reloadAndCapture(
   tabId: number,
   url: string,
-): Promise<{ url: string; meta: PageMeta } | null> {
+): Promise<{ url: string; title?: string; meta: PageMeta } | null> {
   return new Promise((resolve) => {
     let current = tabId;
     let settled = false;
 
-    const finish = (result: { url: string; meta: PageMeta } | null) => {
+    const finish = (result: { url: string; title?: string; meta: PageMeta } | null) => {
       if (settled) return;
       settled = true;
       awaitingMeta.delete(current);
@@ -368,7 +382,8 @@ function reloadAndCapture(
       resolve(result);
     };
 
-    const capture = (result: { url: string; meta: PageMeta }) => finish(result);
+    const capture = (result: { url: string; title?: string; meta: PageMeta }) =>
+      finish(result);
 
     // Deliberately no listener for `status: "complete"`. A JS app often
     // reports complete before it has rendered anything, and discarding at that
@@ -431,10 +446,18 @@ async function run() {
   // Decide what needs embedding: anything with no cached vector, or whose
   // title, harvested metadata or tags have changed since it was embedded.
   const boilerplate = boilerplateHeadings(raw, records);
+  // Chrome reports the URL as the title for a tab it never loaded; the page
+  // itself told us better the last time it was read.
+  const bestTitle = (
+    live: string | undefined,
+    record: TabRecord | undefined,
+    url: string,
+  ) => (isRealTitle(live, url) ? live! : (record?.title ?? live ?? url));
+
   const sources = raw.map((t) => {
     const record = records.get(t.url!);
     return {
-      title: t.title,
+      title: bestTitle(t.title, record, t.url!),
       url: t.url,
       meta: record?.meta && {
         ...record.meta,
@@ -499,7 +522,7 @@ async function run() {
     bucket.push({
       id: t.id!,
       windowId: t.windowId!,
-      title: t.title || urls[i],
+      title: bestTitle(t.title, record, urls[i]),
       url: urls[i],
       host: hostOf(urls[i]),
       domain: domainKey(urls[i]),
@@ -587,11 +610,8 @@ function isUnidentified(
   record: TabRecord | undefined,
 ): boolean {
   if (hasReadableContent(record)) return false;
-  const trimmed = (title ?? "").trim();
-  if (!trimmed) return true;
-  // Chrome's placeholder is the URL, sometimes with the scheme stripped.
-  const bare = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  return trimmed === url || trimmed === bare;
+  // Either the live tab title or the one the page reported when last read.
+  return !isRealTitle(title, url) && !isRealTitle(record?.title, url);
 }
 
 /** A heading this many tabs of one site share is the site's furniture. */
@@ -724,11 +744,12 @@ function offerBacklog(tabs: chrome.tabs.Tab[], records: Map<string, TabRecord>) 
 
   el("backlog-run").onclick = async () => {
     banner.hidden = true;
-    const { read, empty } = await harvestDiscarded(tabs, records);
+    const { read, titleOnly, empty } = await harvestDiscarded(tabs, records);
     lastHarvest =
-      empty > 0
-        ? `Read ${read} tabs; ${empty} had no description or heading to read.`
-        : `Read ${read} tabs.`;
+      `Read ${read} tabs` +
+      (titleOnly > 0 ? ` (${titleOnly} title only)` : "") +
+      (empty > 0 ? `; ${empty} had nothing to read` : "") +
+      ".";
     setProgress(`${lastHarvest} Re-clustering…`, null);
     await run();
   };
@@ -1345,14 +1366,15 @@ function renderUnidentified() {
   readAll.textContent = `Read all ${live.length} — one page load each`;
   readAll.addEventListener("click", async () => {
     readAll.disabled = true;
-    const { read, empty } = await harvestTabs(
+    const { read, titleOnly, empty } = await harvestTabs(
       live.map((t) => ({ id: t.id, url: t.url })),
       state!.records,
     );
     lastHarvest =
-      empty > 0
-        ? `Read ${read} tabs; ${empty} had nothing to read.`
-        : `Read ${read} tabs.`;
+      `Read ${read} tabs` +
+      (titleOnly > 0 ? ` (${titleOnly} title only)` : "") +
+      (empty > 0 ? `; ${empty} had nothing to read` : "") +
+      ".";
     setProgress(`${lastHarvest} Re-clustering…`, null);
     await run();
   });

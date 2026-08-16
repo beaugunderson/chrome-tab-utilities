@@ -54,6 +54,14 @@ const SPA_PAGES = [
   ["spa-2", "Kestrel nesting survey results"],
 ];
 
+// The x.com shape exactly: a JS app that sets only a title, never any meta
+// tags. The title is the whole of what the page ever says about itself, so
+// capturing it is the difference between clustering these and not.
+const TITLE_ONLY_PAGES = [
+  ["title-only-1", "Fermentation notes: koji on barley, day nine"],
+  ["title-only-2", "Fermentation notes: second koji batch went sour"],
+];
+
 // Every fixture page carries a slow image after its content. Real pages are
 // full of these, and they are exactly what `status: "complete"` waits for and
 // DOMContentLoaded does not — so without one here the harvest timing would
@@ -86,6 +94,12 @@ setTimeout(() => {
   m.content = ${JSON.stringify(title + ". Field notes on raptor populations.")};
   document.head.appendChild(m);
 }, ${SPA_RENDER_MS});
+</script></body></html>`,
+  ]),
+  ...TITLE_ONLY_PAGES.map(([slug, title]) => [
+    `/${slug}`,
+    `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+setTimeout(() => { document.title = ${JSON.stringify(title)}; }, ${SPA_RENDER_MS});
 </script></body></html>`,
   ]),
   ...BARE_PAGES.map((slug) => [
@@ -145,8 +159,8 @@ try {
   const extensionId = new URL(worker.url()).host;
   console.log(`extension id: ${extensionId}`);
 
-  console.log(`opening ${PAGES.length + SPA_PAGES.length + BARE_PAGES.length} pages…`);
-  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...BARE_PAGES]) {
+  console.log(`opening ${PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length + BARE_PAGES.length} pages…`);
+  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), ...BARE_PAGES]) {
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/${slug}`, {
       waitUntil: "domcontentloaded",
@@ -170,6 +184,27 @@ try {
   console.log(
     `JS-rendered pages read: ${spaRead.filter(Boolean).length}/${spaRead.length}`,
   );
+
+  // A JS app that only ever sets a title must still be captured. Relying on
+  // Chrome's tab title does not work here: the tab is discarded moments after
+  // the app sets it, so the page's own report is the only dependable copy.
+  const titlesKept = await worker.evaluate(async (slugs) => {
+    const out = [];
+    for (const slug of slugs) {
+      const key = `tab:http://localhost:8765/${slug}`;
+      const stored = await chrome.storage.local.get(key);
+      out.push(stored[key]?.title ?? null);
+    }
+    return out;
+  }, TITLE_ONLY_PAGES.map((p) => p[0]));
+  console.log(`title-only pages captured: ${JSON.stringify(titlesKept)}`);
+  for (const [i, [, expected]] of TITLE_ONLY_PAGES.entries()) {
+    if (titlesKept[i] !== expected) {
+      failures.push(
+        `title-only page ${i + 1} stored ${JSON.stringify(titlesKept[i])}, expected the rendered title`,
+      );
+    }
+  }
   if (spaRead.some((ok) => !ok)) {
     failures.push(
       `${spaRead.filter((ok) => !ok).length} JS-rendered pages produced no metadata; ` +
@@ -203,7 +238,7 @@ try {
       }
     }
     return { asked: tabs.length, withMeta };
-  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0])]);
+  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0])]);
   console.log(
     `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
   );
@@ -529,8 +564,8 @@ try {
 
   await setCut(500);
   const openRows = await visibleTabs();
-  console.log(`tab rows visible without clicking: ${openRows} of ${PAGES.length + SPA_PAGES.length}`);
-  const clusterable = PAGES.length + SPA_PAGES.length;
+  const clusterable = PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length;
+  console.log(`tab rows visible without clicking: ${openRows} of ${clusterable}`);
   if (openRows < clusterable) {
     failures.push(
       `only ${openRows} of ${clusterable} tabs visible without clicking`,
@@ -647,12 +682,17 @@ try {
       `closing one tab removed ${flatBefore.length - flatAfter.length} rows`,
     );
   }
-  for (let i = 0; i < afterClose.groups.length; i++) {
-    const strays = afterClose.groups[i].filter(
-      (t) => !beforeClose.groups[i]?.includes(t),
+  // Compared by membership, not by position: clusters are ordered by closure
+  // value, which depends on size, so losing a tab legitimately reorders them.
+  // What must not happen is a tab moving from one cluster to another.
+  for (const after of afterClose.groups) {
+    const intact = beforeClose.groups.some((before) =>
+      after.every((title) => before.includes(title)),
     );
-    if (strays.length > 0) {
-      failures.push(`closing a tab reshuffled cluster ${i}: ${strays.join("; ")}`);
+    if (!intact) {
+      failures.push(
+        `closing a tab regrouped these into one cluster: ${after.join("; ")}`,
+      );
     }
   }
 

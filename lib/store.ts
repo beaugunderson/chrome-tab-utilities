@@ -18,6 +18,12 @@ export interface TabRecord {
   fp?: string;
   meta?: PageMeta;
   /**
+   * Title as the page itself reported it. Chrome shows the URL for a tab it
+   * never loaded, and a title a JS app sets does not reliably survive the tab
+   * being discarded straight afterwards, so this is the dependable copy.
+   */
+  title?: string;
+  /**
    * When the backlog harvest last loaded this page, whether or not it found
    * anything. Plenty of pages carry no description, og tags or h1 at all, and
    * without recording the attempt they are reloaded again on every pass

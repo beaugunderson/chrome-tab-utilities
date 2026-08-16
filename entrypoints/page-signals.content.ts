@@ -80,7 +80,10 @@ export default defineContentScript({
 
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg && msg.type === "is-form-dirty") {
-        sendResponse({ dirty });
+        // Metadata rides along on the pre-discard check. Once the tab is
+        // discarded this script is gone and there is no way to ask again, so
+        // this is the last chance to capture it.
+        sendResponse({ dirty, url: location.href, meta: harvest() });
         return false;
       }
       // Lets the triage page pull metadata from tabs that were already open

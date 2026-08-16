@@ -51,6 +51,10 @@ const KEEP_NEWEST_COUNT = 3;
 const MAX_GROUP_TITLE = 30;
 // Page-metadata requests in flight while backfilling.
 const META_CONCURRENCY = 16;
+// Discarded tabs are reloaded to read them, so this caps how many real page
+// loads run at once.
+const HARVEST_CONCURRENCY = 4;
+const HARVEST_LOAD_TIMEOUT_MS = 15000;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
   "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey",
@@ -202,6 +206,96 @@ async function backfillMeta(
   return updates.size;
 }
 
+/**
+ * Reload discarded tabs one small batch at a time to read their metadata, then
+ * discard them again.
+ *
+ * Explicit rather than automatic: this is one real page load per tab, so on a
+ * large tab set it is hundreds of HTTP requests. Only reachable from a button
+ * that states the count. Concurrency is low so at most a handful of tabs are
+ * resident at once, and abandoning it midway is safe — the discard sweep puts
+ * anything left loaded back to sleep within the hour.
+ */
+async function harvestDiscarded(
+  tabs: chrome.tabs.Tab[],
+  records: Map<string, TabRecord>,
+): Promise<number> {
+  const targets = tabs.filter(
+    (t) => t.discarded && t.url?.startsWith("http") && !records.get(t.url)?.meta,
+  );
+  if (targets.length === 0) return 0;
+
+  const updates = new Map<string, TabRecord>();
+  let done = 0;
+
+  await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
+    const liveId = await reloadAndWait(tab.id!);
+    if (liveId !== null) {
+      try {
+        const response = (await chrome.tabs.sendMessage(liveId, {
+          type: "get-page-meta",
+        })) as { url?: string; meta?: PageMeta } | undefined;
+        if (response?.url && response.meta) {
+          const record = { ...(records.get(response.url) ?? {}), meta: response.meta };
+          records.set(response.url, record);
+          updates.set(response.url, record);
+        }
+      } catch {
+        // Page blocks content scripts; nothing to read.
+      }
+      // Straight back to sleep, so this never balloons memory.
+      try {
+        await chrome.tabs.discard(liveId);
+      } catch {
+        // Became active while we held it; the sweep will get it later.
+      }
+    }
+    done++;
+    setProgress(
+      `Reading unloaded tabs… ${done}/${targets.length}`,
+      done / targets.length,
+      "Each is loaded once, read, then discarded again.",
+    );
+  });
+
+  await saveRecords(updates);
+  return updates.size;
+}
+
+/**
+ * Reload a discarded tab and resolve once it has loaded. Chrome can hand the
+ * reloaded page a brand new tab id, so the replacement is tracked and the live
+ * id returned; messaging the pre-reload id would hit a tab that no longer
+ * exists.
+ */
+function reloadAndWait(tabId: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    let current = tabId;
+    let settled = false;
+
+    const finish = (result: number | null) => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onReplaced.removeListener(onReplaced);
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const onUpdated = (id: number, info: chrome.tabs.OnUpdatedInfo) => {
+      if (id === current && info.status === "complete") finish(current);
+    };
+    const onReplaced = (added: number, removed: number) => {
+      if (removed === current) current = added;
+    };
+    const timer = setTimeout(() => finish(null), HARVEST_LOAD_TIMEOUT_MS);
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onReplaced.addListener(onReplaced);
+    chrome.tabs.reload(current).catch(() => finish(null));
+  });
+}
+
 async function mapWithConcurrency<T>(
   items: T[],
   limit: number,
@@ -338,6 +432,7 @@ async function run() {
   el("granularity").hidden = false;
   resetSliderToDefault();
   render();
+  offerBacklog(raw, records);
 }
 
 /** Merge overlapping duplicate pairs into groups via union-find. */
@@ -394,6 +489,45 @@ function formatIdle(days: number): string {
 }
 
 // ===== Rendering =====
+
+let backlogDismissed = false;
+
+/**
+ * Offer to read the discarded tabs, stating the cost. Auto-discard means most
+ * of a long-lived tab set is unloaded, and an unloaded tab has no content
+ * script to ask, so without this the clustering runs on titles alone.
+ */
+function offerBacklog(tabs: chrome.tabs.Tab[], records: Map<string, TabRecord>) {
+  const banner = el("backlog");
+  if (backlogDismissed) {
+    banner.hidden = true;
+    return;
+  }
+  const targets = tabs.filter(
+    (t) => t.discarded && t.url?.startsWith("http") && !records.get(t.url)?.meta,
+  );
+  if (targets.length === 0) {
+    banner.hidden = true;
+    return;
+  }
+
+  banner.hidden = false;
+  el("backlog-text").textContent =
+    `${targets.length} unloaded tabs are being clustered on their titles alone. ` +
+    `Reading their page text means loading each one once (${targets.length} page loads), ` +
+    `then discarding it again.`;
+
+  el("backlog-run").onclick = async () => {
+    banner.hidden = true;
+    const added = await harvestDiscarded(tabs, records);
+    setProgress(`Read ${added} tabs. Re-clustering…`, null);
+    await run();
+  };
+  el("backlog-dismiss").onclick = () => {
+    backlogDismissed = true;
+    banner.hidden = true;
+  };
+}
 
 /** Park the slider at the quantile closest to the default inconsistency. */
 function resetSliderToDefault() {

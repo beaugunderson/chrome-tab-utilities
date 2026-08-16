@@ -108,6 +108,38 @@ try {
   // Give the content script's harvest a moment to reach the background.
   await new Promise((r) => setTimeout(r, 1500));
 
+  // Metadata has to be captured *before* a tab is discarded: once it is
+  // unloaded there is no content script to ask, and on a long-lived tab set
+  // with auto-discard on that is nearly every tab. The capture rides along on
+  // the pre-discard form-dirty check, so exercise exactly that message.
+  //
+  // The tabs are not actually discarded here: discarding a Playwright-attached
+  // page takes the whole browser down.
+  const preDiscard = await worker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ url: "http://localhost:8765/*" });
+    let withMeta = 0;
+    for (const tab of tabs) {
+      try {
+        const response = await chrome.tabs.sendMessage(tab.id, {
+          type: "is-form-dirty",
+        });
+        if (response?.meta?.description) withMeta++;
+      } catch {
+        /* no content script */
+      }
+    }
+    return { asked: tabs.length, withMeta };
+  });
+  console.log(
+    `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
+  );
+  if (preDiscard.withMeta < preDiscard.asked) {
+    failures.push(
+      `pre-discard capture missed ${preDiscard.asked - preDiscard.withMeta} tabs; ` +
+        "discarded tabs would cluster on titles alone",
+    );
+  }
+
   const triage = await context.newPage();
   triage.on("console", (m) => {
     if (m.type() === "error") consoleErrors.push(m.text());
@@ -151,6 +183,23 @@ try {
   if (ortRequests.size === 0) {
     failures.push("no ORT runtime files were fetched; wasmPaths may be ignored");
   }
+
+  const metaShare = Number(/(\d+)% with page metadata/.exec(stats ?? "")?.[1] ?? 0);
+  console.log(`page metadata coverage: ${metaShare}%`);
+  if (metaShare < 90) {
+    failures.push(`only ${metaShare}% of tabs have page metadata`);
+  }
+
+  // Nothing is discarded in this run, so there is no backlog to offer. A CSS
+  // display rule can silently beat the `hidden` attribute, which is exactly
+  // how this and the selection footer once showed permanently.
+  const backlogShown = await triage.isVisible("#backlog");
+  const selectionShown = await triage.isVisible("#selection");
+  console.log(
+    `hidden-when-empty — backlog: ${!backlogShown}, selection footer: ${!selectionShown}`,
+  );
+  if (backlogShown) failures.push("backlog prompt shown with nothing to harvest");
+  if (selectionShown) failures.push("selection footer shown with nothing selected");
 
   const defaultPosition = await triage.inputValue("#cut");
   const defaultClusters = await triage.$$eval(

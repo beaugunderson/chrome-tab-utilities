@@ -1081,7 +1081,7 @@ async function sweepDiscardableTabs() {
   // The dirty-form check is a message round trip per tab, so cap how many are
   // in flight at once on a large sweep.
   await mapWithConcurrency(candidates, DISCARD_SWEEP_CONCURRENCY, async (tabId) => {
-    if (await isFormDirty(tabId)) return;
+    if (await checkBeforeDiscard(tabId)) return;
     try {
       await chrome.tabs.discard(tabId);
     } catch {
@@ -1091,15 +1091,27 @@ async function sweepDiscardableTabs() {
 }
 
 
-async function isFormDirty(tabId: number): Promise<boolean> {
-  // Content script lives in the page, so this round-trip survives SW sleep.
-  // No listener (chrome://, file://, content script not yet injected) → treat
-  // as not dirty so we don't refuse to discard pages that can never have
-  // form input in the first place.
+/**
+ * Ask a tab whether it holds unsaved form input, and take its page metadata
+ * while the content script is still there to answer.
+ *
+ * Discarding is the point of no return for metadata: the script goes with the
+ * page, and a discarded tab can only be read again by reloading it. On a tab
+ * set where nearly everything is discarded, capturing it here is the
+ * difference between the triage page clustering on real page text and
+ * clustering on titles alone.
+ */
+async function checkBeforeDiscard(tabId: number): Promise<boolean> {
+  // The round trip survives SW sleep because the content script lives in the
+  // page. No listener (chrome://, file://, not yet injected) → treat as not
+  // dirty, so pages that can never hold form input still get discarded.
   try {
     const response = (await chrome.tabs.sendMessage(tabId, {
       type: "is-form-dirty",
-    })) as { dirty?: boolean } | undefined;
+    })) as { dirty?: boolean; url?: string; meta?: PageMeta } | undefined;
+    if (response?.url && response.meta) {
+      await patchRecord(response.url, { meta: response.meta });
+    }
     return response?.dirty === true;
   } catch {
     return false;

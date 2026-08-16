@@ -23,6 +23,16 @@
   box-sizing: border-box;
 }
 
+/*
+ * The granularity bar, backlog prompt and selection footer are all
+ * display:flex and all start with the `hidden` attribute. A display rule beats
+ * the user-agent's `[hidden] { display: none }`, so without this they are
+ * visible from the moment the page opens no matter what the code sets.
+ */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   padding: 0 0 72px;
@@ -382,4 +392,20 @@ button.danger {
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* ===== Backlog prompt ===== */
+
+.backlog {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 8px;
+}
+
+.backlog span {
+  flex: 1;
 }

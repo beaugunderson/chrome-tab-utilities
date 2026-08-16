@@ -35,7 +35,7 @@ Everything starts expanded, including sub-clusters and clusters that only appear
 
 - Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
 - Cluster names come from c-TF-IDF over the member titles: words and short phrases frequent inside the cluster and rare across the others, in their original casing. No model call, so names update instantly with the slider.
-- Page metadata is pulled from every loaded tab when the page opens, not only when a tab is navigated, so tabs that have been sitting open for months still contribute more than their title. The stats line shows what share of tabs have it.
+- Page metadata is captured just before a tab is auto-discarded, and pulled from every loaded tab when the triage page opens. The stats line shows what share of tabs have it. If tabs were already discarded before this shipped, the page offers a one-off pass that loads each of them once, reads it, and discards it again — stated up front with the count, never automatic.
 - **Near-duplicates** are found by cosine similarity rather than URL, which catches the same story on three different sites — something the URL-based duplicate closer structurally cannot.
 - Per-cluster actions: close all, keep the 3 most recent, apply as a Chrome tab group, move to a new window, tag all.
 - **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.

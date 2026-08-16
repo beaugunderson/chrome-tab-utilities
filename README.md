@@ -25,7 +25,7 @@ Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's nativ
 
 A separate page ("Triage tabs by topic" in the popup, or the `triage-tabs` command) that groups tabs by what they are *about*, for deciding what to close.
 
-Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata, URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
+Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata (description, og:title and the twitter: card tags, heading, section), URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
 
 The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag. A cluster shows its own sub-clusters, so a broad "news" cluster opens into per-story groups.
 

@@ -3,6 +3,8 @@ import { hostOf } from "./url";
 /** Page metadata harvested by the content script, cached per URL. */
 export interface PageMeta {
   description?: string;
+  /** og:title or twitter:title: server-rendered, so it survives an app that never runs. */
+  ogTitle?: string;
   siteName?: string;
   section?: string;
   ogType?: string;
@@ -36,9 +38,9 @@ export function isRealTitle(title: string | undefined, url: string): boolean {
 /**
  * Whether harvested metadata says anything about *this page*.
  *
- * Only a description or a heading counts. A site name, an og:type and a
- * section are properties of the site: every page on it carries the same ones,
- * so they cannot distinguish one page from another.
+ * A description, a heading or an og:title counts. A site name, an og:type and
+ * a section are properties of the site: every page on it carries the same
+ * ones, so they cannot distinguish one page from another.
  *
  * This has to be the single definition. It was briefly two — one that counted
  * a site name and one that did not — and x.com, which serves og:site_name and
@@ -48,7 +50,9 @@ export function isRealTitle(title: string | undefined, url: string): boolean {
  */
 export function hasMetaContent(meta: PageMeta | undefined): boolean {
   if (!meta) return false;
-  return Boolean(meta.description?.trim() || meta.heading?.trim());
+  return Boolean(
+    meta.description?.trim() || meta.heading?.trim() || meta.ogTitle?.trim(),
+  );
 }
 
 export interface FeatureSource {
@@ -188,6 +192,8 @@ export function featureText(source: FeatureSource): string {
 
   const host = hostOf(source.url);
   add(cleanTitle(source.title, meta.siteName, host));
+  // Often the only thing a JS app exposes about itself.
+  add(meta.ogTitle);
   add(meta.heading);
   add(meta.description);
   add(meta.siteName ?? host ?? undefined);

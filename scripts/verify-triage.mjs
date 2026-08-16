@@ -75,6 +75,15 @@ const REDIRECT_FROM = "redirect-from";
 const REDIRECT_TO = "redirect-to";
 const REDIRECT_TITLE = "Sourdough hydration troubleshooting guide";
 
+// x.com exactly as measured: og:site_name and og:title are server-rendered,
+// there is no <title> and no description, and the app never hydrates, so
+// document.title stays empty for the full settle window. Everything knowable
+// about the page is in og:title.
+const OG_ONLY_PAGES = [
+  ["og-only-1", "Ilse Crawford on why a room should be forgiving"],
+  ["og-only-2", "Ilse Crawford interview: designing for the senses"],
+];
+
 function html(title, description, siteName) {
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>${title}</title>
@@ -114,6 +123,13 @@ setTimeout(() => { document.title = ${JSON.stringify(title)}; }, ${SPA_RENDER_MS
   ]),
   // Only og:site_name, exactly what x.com serves. Not content: every page on
   // the site carries the same value, so it cannot identify any of them.
+  ...OG_ONLY_PAGES.map(([slug, ogTitle]) => [
+    `/${slug}`,
+    `<!doctype html><html><head><meta charset="utf-8">
+<meta property="og:site_name" content="X (formerly Twitter)">
+<meta property="og:title" content="${ogTitle}">
+</head><body><div id="app"></div></body></html>`,
+  ]),
   ...BARE_PAGES.map((slug) => [
     `/${slug}`,
     `<!doctype html><html><head><meta charset="utf-8"><meta property="og:site_name" content="Bare"><meta property="og:type" content="article"></head><body><p>x</p></body></html>`,
@@ -182,7 +198,7 @@ try {
   console.log(`extension id: ${extensionId}`);
 
   console.log(`opening ${PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length + BARE_PAGES.length} pages…`);
-  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM, ...BARE_PAGES]) {
+  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), ...OG_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM, ...BARE_PAGES]) {
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/${slug}`, {
       waitUntil: "domcontentloaded",
@@ -220,6 +236,28 @@ try {
     return out;
   }, TITLE_ONLY_PAGES.map((p) => p[0]));
   console.log(`title-only pages captured: ${JSON.stringify(titlesKept)}`);
+
+  // A page whose only self-description is og:title must be read from it. This
+  // is the measured x.com shape: 78 tabs returned og:site_name and an empty
+  // document.title, which proved the og tags were there and only the
+  // informative ones were going unread.
+  const ogOnly = await worker.evaluate(async (slugs) => {
+    const out = [];
+    for (const slug of slugs) {
+      const key = `tab:http://localhost:8765/${slug}`;
+      const stored = await chrome.storage.local.get(key);
+      out.push(stored[key]?.meta?.ogTitle ?? null);
+    }
+    return out;
+  }, OG_ONLY_PAGES.map((p) => p[0]));
+  console.log(`og:title-only pages read: ${JSON.stringify(ogOnly)}`);
+  for (const [i, [, expected]] of OG_ONLY_PAGES.entries()) {
+    if (ogOnly[i] !== expected) {
+      failures.push(
+        `og:title-only page ${i + 1} stored ${JSON.stringify(ogOnly[i])}, expected its og:title`,
+      );
+    }
+  }
 
   // A server redirect moves the tab itself, so the record belongs under the
   // destination — that is the URL the tab now has and the only one anything
@@ -275,7 +313,7 @@ try {
       }
     }
     return { asked: tabs.length, withMeta };
-  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM]);
+  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), ...OG_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM]);
   console.log(
     `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
   );
@@ -610,7 +648,8 @@ try {
 
   await setCut(500);
   const openRows = await visibleTabs();
-  const clusterable = PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length;
+  const clusterable =
+    PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length + OG_ONLY_PAGES.length;
   console.log(`tab rows visible without clicking: ${openRows} of ${clusterable}`);
   if (openRows < clusterable) {
     failures.push(

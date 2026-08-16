@@ -6,7 +6,7 @@
 //    often truncated or generic, and this is what lets a pile of news tabs
 //    separate by story rather than by publisher.
 
-import { type PageMeta, isRealTitle } from "../lib/features";
+import { type PageMeta, hasMetaContent, isRealTitle } from "../lib/features";
 
 const MAX_FIELD_LENGTH = 400;
 /** How long to keep watching a page that had nothing at DOMContentLoaded. */
@@ -64,10 +64,25 @@ function visibleHeading(): string | undefined {
 
 function harvest(): PageMeta {
   const heading = visibleHeading();
+  const siteName = attr('meta[property="og:site_name"]');
+
+  // og:title and the twitter: card tags are server-rendered, so they survive
+  // an app that never hydrates. Measured on 78 x.com tabs: og:site_name came
+  // through while document.title stayed empty for the full fifteen seconds,
+  // which proves the og tags are in the served HTML and only the informative
+  // ones were going unread.
+  let ogTitle =
+    attr('meta[property="og:title"]') ?? attr('meta[name="twitter:title"]');
+  // Some sites set og:title to the site's name, which says nothing.
+  if (ogTitle && siteName && ogTitle.trim() === siteName.trim()) ogTitle = undefined;
+
   return {
     description:
-      attr('meta[name="description"]') ?? attr('meta[property="og:description"]'),
-    siteName: attr('meta[property="og:site_name"]'),
+      attr('meta[name="description"]') ??
+      attr('meta[property="og:description"]') ??
+      attr('meta[name="twitter:description"]'),
+    ogTitle,
+    siteName,
     section:
       attr('meta[property="article:section"]') ??
       attr('meta[name="section"]') ??
@@ -135,9 +150,6 @@ export default defineContentScript({
         .catch(() => {});
     };
 
-    const hasSomething = (meta: PageMeta) =>
-      Boolean(meta.description || meta.heading || meta.section);
-
     /**
      * A title the page set itself, rather than a placeholder. Shares its
      * definition with the rest of the extension so the content script cannot
@@ -158,7 +170,11 @@ export default defineContentScript({
     const reportMeta = () => {
       const attempt = (final: boolean) => {
         const meta = harvest();
-        if (final || hasSomething(meta) || hasRealTitle()) {
+        // Shares its definition of "said something" with the rest of the
+        // extension. A local copy went stale the moment og:title was added:
+        // pages whose only self-description was og:title sat out the whole
+        // settle window before reporting what they had had all along.
+        if (final || hasMetaContent(meta) || hasRealTitle()) {
           send(meta, final);
           return true;
         }

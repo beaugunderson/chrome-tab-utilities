@@ -1,6 +1,15 @@
 import { defineConfig } from "wxt";
 
+// Stamped at build time so every artifact can say which build it came from.
+// Content scripts do not update in already-open tabs until those tabs
+// navigate, so a stale one can answer a message from a fresh page and the
+// result is indistinguishable from the feature not working.
+const BUILD_ID = new Date().toISOString();
+
 export default defineConfig({
+  vite: () => ({
+    define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
+  }),
   manifest: {
     name: "Tab Tools",
     description: "Keyboard shortcuts and popup actions for copy/paste tab URLs, group tabs by domain, sort tabs, close duplicate tabs, merge windows, and split tabs into a new window",

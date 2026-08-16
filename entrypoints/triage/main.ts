@@ -71,6 +71,8 @@ interface CapturedPage {
   /** Meta tag names present, sent only when nothing useful was found. */
   metaNames?: string[];
   readyState?: string;
+  /** Build of the content script that answered. */
+  buildId?: string;
 }
 
 interface HarvestOutcome {
@@ -320,6 +322,7 @@ async function harvestTabs(
       ...(landedElsewhere ? { redirectedTo: caught!.url.slice(0, 200) } : {}),
       ...(caught?.metaNames ? { metaNamesSeen: caught.metaNames } : {}),
       ...(caught?.readyState ? { readyStateSeen: caught.readyState } : {}),
+      ...(caught?.buildId ? { answeredByBuild: caught.buildId } : {}),
       ...(gotMeta ? { meta: caught!.meta } : {}),
       ...(gotTitle ? { title: caught!.title } : {}),
     };
@@ -392,6 +395,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     meta: msg.meta,
     metaNames: msg.metaNames,
     readyState: msg.readyState,
+    buildId: msg.buildId,
   });
 });
 
@@ -1608,6 +1612,7 @@ function exportSnapshot() {
 
   return {
     generated: new Date().toISOString(),
+    build: __BUILD_ID__,
     tabs: state.tabs.length - state.removed.size,
     threshold,
     withMeta: state.withMeta,
@@ -1641,6 +1646,7 @@ function exportSnapshot() {
           meta: record?.meta,
           metaNamesSeen: record?.metaNamesSeen,
           readyStateSeen: record?.readyStateSeen,
+          answeredByBuild: record?.answeredByBuild,
           triedAt: record?.metaTried,
         };
       }),

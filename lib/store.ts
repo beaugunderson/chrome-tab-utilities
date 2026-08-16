@@ -50,6 +50,8 @@ export interface TabRecord {
   metaNamesSeen?: string[];
   /** document.readyState at the moment a page reported. Diagnostic. */
   readyStateSeen?: string;
+  /** Build of the content script that last answered for this page. */
+  answeredByBuild?: string;
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

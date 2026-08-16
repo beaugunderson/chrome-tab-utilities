@@ -110,6 +110,8 @@ pnpm build  # production build
 - Every element that starts with the `hidden` attribute must survive `[hidden] { display: none !important }` in the stylesheet: the granularity bar, backlog prompt and selection footer are all `display: flex`, and a display rule beats the user-agent `[hidden]` rule, so they render permanently without it
 - Renders are coalesced to one animation frame (`scheduleRender`). The slider fires `input` per pixel and a pass rebuilds every visible row; anything reading the DOM after a slider change has to wait two frames
 
+- Every build stamps `__BUILD_ID__` (wxt.config.ts `define`). The JSON export carries the page's build, and each harvested record carries the build of the content script that answered. **Content scripts do not update in already-open tabs until those tabs navigate**, so a stale one can answer a fresh page and the result is indistinguishable from a broken feature: a whole round was spent on 78 tabs whose records lacked a field the new build sends unconditionally. Compare `build` and `answeredByBuild` before diagnosing anything
+
 ## Notes
 
 - Offscreen document is required because MV3 service workers have no DOM/clipboard access

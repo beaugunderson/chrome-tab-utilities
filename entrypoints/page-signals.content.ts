@@ -167,6 +167,10 @@ export default defineContentScript({
           // answered by the page rather than by another guess.
           metaNames: hasMetaContent(meta) ? undefined : metaTagNames(),
           readyState: document.readyState,
+          // Which build answered. A content script from an older build stays
+          // resident in already-open tabs, and its silence on a new field is
+          // indistinguishable from the feature being broken.
+          buildId: __BUILD_ID__,
         })
         .catch(() => {});
     };

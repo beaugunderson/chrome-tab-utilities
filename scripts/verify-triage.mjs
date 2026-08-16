@@ -38,13 +38,21 @@ const PAGES = [
   ["dupe-b", "Fed holds interest rates steady", "The Federal Reserve left the benchmark interest rate unchanged.", "reprint.local"],
 ];
 
+// Every fixture page carries a slow image after its content. Real pages are
+// full of these, and they are exactly what `status: "complete"` waits for and
+// DOMContentLoaded does not — so without one here the harvest timing would
+// look identical either way and prove nothing.
+const SLOW_ASSET_MS = 1500;
+
 function html(title, description, siteName) {
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>${title}</title>
 <meta name="description" content="${description}">
 <meta property="og:site_name" content="${siteName}">
 <meta property="og:type" content="article">
-</head><body><h1>${title}</h1><p>${description}</p></body></html>`;
+</head><body><h1>${title}</h1><p>${description}</p>
+<img src="/slow.png" alt="">
+</body></html>`;
 }
 
 const routes = new Map(
@@ -55,7 +63,14 @@ const routes = new Map(
 );
 
 const server = createServer((req, res) => {
-  const body = routes.get((req.url ?? "").split("?")[0]);
+  const path = (req.url ?? "").split("?")[0];
+  if (path === "/slow.png") {
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "image/png" }).end(Buffer.alloc(64));
+    }, SLOW_ASSET_MS);
+    return;
+  }
+  const body = routes.get(path);
   if (!body) {
     res.writeHead(404).end("nope");
     return;
@@ -137,6 +152,53 @@ try {
     failures.push(
       `pre-discard capture missed ${preDiscard.asked - preDiscard.withMeta} tabs; ` +
         "discarded tabs would cluster on titles alone",
+    );
+  }
+
+  // The backlog harvest resolves on the content script's DOMContentLoaded push
+  // and discards immediately, rather than waiting for `status: "complete"`.
+  // Measure the gap it is exploiting: with a slow asset on the page, complete
+  // lands well after the metadata is already available.
+  const timing = await worker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({
+      url: "http://localhost:8765/pr-1",
+    });
+    return await new Promise((resolve) => {
+      const t0 = Date.now();
+      let metaAt = null;
+      let completeAt = null;
+      const done = () => {
+        chrome.runtime.onMessage.removeListener(onMessage);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve({ metaAt, completeAt });
+      };
+      const onMessage = (msg, sender) => {
+        if (msg?.type === "page-meta" && sender.tab?.id === tab.id) {
+          metaAt ??= Date.now() - t0;
+        }
+      };
+      const onUpdated = (id, info) => {
+        if (id === tab.id && info.status === "complete") {
+          completeAt ??= Date.now() - t0;
+          done();
+        }
+      };
+      chrome.runtime.onMessage.addListener(onMessage);
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.reload(tab.id);
+      setTimeout(done, 6000);
+    });
+  });
+  console.log(
+    `harvest timing: metadata at ${timing.metaAt}ms, ` +
+      `page ${timing.completeAt === null ? "never reported complete" : `complete at ${timing.completeAt}ms`}`,
+  );
+  if (timing.metaAt === null) {
+    failures.push("no metadata push arrived after reload");
+  } else if (timing.completeAt !== null && timing.metaAt >= timing.completeAt - 500) {
+    failures.push(
+      `metadata arrived at ${timing.metaAt}ms vs complete at ${timing.completeAt}ms; ` +
+        "waiting for complete would cost nothing, so the harvest gains nothing",
     );
   }
 

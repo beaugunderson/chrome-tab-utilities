@@ -52,9 +52,14 @@ const MAX_GROUP_TITLE = 30;
 // Page-metadata requests in flight while backfilling.
 const META_CONCURRENCY = 16;
 // Discarded tabs are reloaded to read them, so this caps how many real page
-// loads run at once.
-const HARVEST_CONCURRENCY = 4;
-const HARVEST_LOAD_TIMEOUT_MS = 15000;
+// loads run at once. Each is discarded again as soon as its DOM is parsed, so
+// residency is short and peak memory stays near this many partly-loaded pages.
+const HARVEST_CONCURRENCY = 8;
+// Metadata lands within tens of milliseconds of the HTML arriving, so this
+// only has to cover a slow server, not a slow page. Measured: a page with one
+// slow asset never reported `status: "complete"` within 15s while its metadata
+// was ready at 34ms — waiting on the load event is what made this crawl.
+const HARVEST_LOAD_TIMEOUT_MS = 8000;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
   "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey",
@@ -235,33 +240,22 @@ async function harvestDiscarded(
   const updates = new Map<string, TabRecord>();
   let done = 0;
 
+  const started = performance.now();
+
   await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
-    const liveId = await reloadAndWait(tab.id!);
-    if (liveId !== null) {
-      try {
-        const response = (await chrome.tabs.sendMessage(liveId, {
-          type: "get-page-meta",
-        })) as { url?: string; meta?: PageMeta } | undefined;
-        if (response?.url && response.meta) {
-          const record = { ...(records.get(response.url) ?? {}), meta: response.meta };
-          records.set(response.url, record);
-          updates.set(response.url, record);
-        }
-      } catch {
-        // Page blocks content scripts; nothing to read.
-      }
-      // Straight back to sleep, so this never balloons memory.
-      try {
-        await chrome.tabs.discard(liveId);
-      } catch {
-        // Became active while we held it; the sweep will get it later.
-      }
+    const caught = await reloadAndCapture(tab.id!);
+    if (caught?.meta) {
+      const record = { ...(records.get(caught.url) ?? {}), meta: caught.meta };
+      records.set(caught.url, record);
+      updates.set(caught.url, record);
     }
     done++;
+    const rate = done / ((performance.now() - started) / 1000);
+    const left = Math.round((targets.length - done) / Math.max(rate, 0.01));
     setProgress(
       `Reading unloaded tabs… ${done}/${targets.length}`,
       done / targets.length,
-      "Each is loaded once, read, then discarded again.",
+      `${rate.toFixed(1)}/s · about ${formatDuration(left)} left`,
     );
   });
 
@@ -269,34 +263,77 @@ async function harvestDiscarded(
   return updates.size;
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
 /**
- * Reload a discarded tab and resolve once it has loaded. Chrome can hand the
- * reloaded page a brand new tab id, so the replacement is tracked and the live
- * id returned; messaging the pre-reload id would hit a tab that no longer
- * exists.
+ * Tabs waiting on their content script to report in, keyed by tab id. The
+ * content script pushes its metadata at DOMContentLoaded, and every extension
+ * page receives that message, so this page can catch it directly.
  */
-function reloadAndWait(tabId: number): Promise<number | null> {
+const awaitingMeta = new Map<
+  number,
+  (result: { url: string; meta: PageMeta }) => void
+>();
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== "page-meta" || sender.tab?.id === undefined) return;
+  awaitingMeta.get(sender.tab.id)?.({ url: msg.url, meta: msg.meta });
+});
+
+/**
+ * Reload a tab, grab its metadata the moment the DOM is parsed, and put it
+ * straight back to sleep.
+ *
+ * Waiting for `status: "complete"` would mean waiting for every image, font
+ * and tracker on the page, which is most of the wall clock and none of the
+ * value: the meta tags, h1 and JSON-LD are all present at DOMContentLoaded.
+ * Discarding at that point also cancels whatever is still in flight, so each
+ * tab is resident for a fraction of a full load.
+ *
+ * Chrome can hand a reloaded tab a brand new id, so replacements are tracked.
+ */
+function reloadAndCapture(
+  tabId: number,
+): Promise<{ url: string; meta: PageMeta } | null> {
   return new Promise((resolve) => {
     let current = tabId;
     let settled = false;
 
-    const finish = (result: number | null) => {
+    const finish = (result: { url: string; meta: PageMeta } | null) => {
       if (settled) return;
       settled = true;
+      awaitingMeta.delete(current);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onReplaced.removeListener(onReplaced);
       clearTimeout(timer);
+      // Back to sleep immediately; this is also what aborts the rest of the
+      // page load.
+      chrome.tabs.discard(current).catch(() => {
+        // Became active while we held it; the sweep will get it later.
+      });
       resolve(result);
     };
 
+    const capture = (result: { url: string; meta: PageMeta }) => finish(result);
+
+    // Fallback for pages that report nothing worth sending: the load finishing
+    // is the signal that there was nothing coming.
     const onUpdated = (id: number, info: chrome.tabs.OnUpdatedInfo) => {
-      if (id === current && info.status === "complete") finish(current);
+      if (id === current && info.status === "complete") finish(null);
     };
     const onReplaced = (added: number, removed: number) => {
-      if (removed === current) current = added;
+      if (removed !== current) return;
+      awaitingMeta.delete(current);
+      current = added;
+      awaitingMeta.set(current, capture);
     };
+
     const timer = setTimeout(() => finish(null), HARVEST_LOAD_TIMEOUT_MS);
 
+    awaitingMeta.set(current, capture);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onReplaced.addListener(onReplaced);
     chrome.tabs.reload(current).catch(() => finish(null));

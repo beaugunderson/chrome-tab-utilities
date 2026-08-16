@@ -43,7 +43,7 @@ const PAGES = [
 // description or h1 either. All that is knowable is the URL, so they embed
 // near-identically — calling them duplicates of each other would be wrong, and
 // so would letting them bridge unrelated clusters.
-const BARE_PAGES = ["bare-1", "bare-2", "bare-3"];
+const BARE_PAGES = ["acct-alpha/bare-1", "acct-alpha/bare-2", "acct-beta/bare-3"];
 
 // A JS app: nothing in the served HTML, everything set after a delay. This is
 // what x.com looks like, and reading only at DOMContentLoaded found nothing on
@@ -483,9 +483,15 @@ try {
     b.map((x) => x.textContent ?? ""),
   );
   console.log(`unidentified actions: ${JSON.stringify(readButton)}`);
-  if (!readButton.some((t) => t.includes("Read all"))) {
-    failures.push("unidentified section says to read them but offers no button");
+  // Reading is offered only where it could help. Pages already proven to have
+  // no title or description will not grow one, and offering to load them again
+  // would promise something that cannot happen. What the section must always
+  // offer is a way to act on them.
+  if (!readButton.some((t) => t.includes("Close all"))) {
+    failures.push(`unidentified section offers no action: ${JSON.stringify(readButton)}`);
   }
+  const offersRead = readButton.some((t) => /^Read \d+/.test(t));
+  console.log(`unidentified offers a read button: ${offersRead}`);
 
   // The section has to say why the last attempt came to nothing, next to the
   // tabs rather than in the header where it gets lost.
@@ -494,6 +500,19 @@ try {
   );
   if (!diagnosis.some((t) => /been read yet|Last attempt:/.test(t))) {
     failures.push(`unidentified section reports no read outcome: ${JSON.stringify(diagnosis)}`);
+  }
+
+  // Unreadable tabs are grouped by the account in their URL, not lumped under
+  // the host: 77 x.com tabs in one pile are undecidable, the same tabs split
+  // by account are a list you can work through.
+  const spaceHeaders = await triage.$$eval("#unknown .cluster-name", (n) =>
+    n.map((x) => x.textContent ?? ""),
+  );
+  console.log(`unidentified grouped as: ${JSON.stringify(spaceHeaders)}`);
+  if (!spaceHeaders.some((h) => h.includes("/acct-alpha"))) {
+    failures.push(
+      `unidentified tabs not split by account: ${JSON.stringify(spaceHeaders)}`,
+    );
   }
 
   const clusteredBare = await triage.$$eval("main .tab-title", (rows) =>
@@ -649,7 +668,11 @@ try {
   await setCut(500);
   const openRows = await visibleTabs();
   const clusterable =
-    PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length + OG_ONLY_PAGES.length;
+    PAGES.length +
+    SPA_PAGES.length +
+    TITLE_ONLY_PAGES.length +
+    OG_ONLY_PAGES.length +
+    1; // the redirected page
   console.log(`tab rows visible without clicking: ${openRows} of ${clusterable}`);
   if (openRows < clusterable) {
     failures.push(

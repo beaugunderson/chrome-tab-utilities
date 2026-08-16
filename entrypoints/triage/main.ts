@@ -39,6 +39,7 @@ import {
   saveRecords,
 } from "../../lib/store";
 import { removeTabs } from "../../lib/tabs";
+import { fetchTweet, tweetIdFromUrl } from "../../lib/tweets";
 import { domainKey, hostOf } from "../../lib/url";
 
 const NEAR_DUPLICATE_SIMILARITY = 0.95;
@@ -55,6 +56,8 @@ const META_CONCURRENCY = 16;
 // loads run at once. Each is discarded again as soon as its DOM is parsed, so
 // residency is short and peak memory stays near this many partly-loaded pages.
 const HARVEST_CONCURRENCY = 8;
+// Post lookups are a small JSON request each, so they can run wider.
+const TWEET_CONCURRENCY = 6;
 // Metadata lands within tens of milliseconds of the HTML arriving, so this
 // only has to cover a slow server, not a slow page. Measured: a page with one
 // slow asset never reported `status: "complete"` within 15s while its metadata
@@ -273,13 +276,83 @@ async function harvestDiscarded(
   );
 }
 
-/** Load, read and re-discard an explicit list of tabs. */
-async function harvestTabs(
+/**
+ * Read x.com posts from Twitter's syndication endpoint rather than loading
+ * them.
+ *
+ * Measured on 53 real tabs: x.com's served HTML carries viewport, fb:app_id,
+ * og:site_name and three site-verification tokens, and nothing else. No title,
+ * no description, nothing per-post, and the app never hydrates in a background
+ * tab, so there is nothing in the page to read however long you wait. The
+ * endpoint returns the post text as JSON without authentication.
+ */
+async function harvestTweets(
   targets: Array<{ id: number; url: string }>,
   records: Map<string, TabRecord>,
+  onProgress: (done: number) => void,
+): Promise<{ read: number; failed: number }> {
+  const updates = new Map<string, TabRecord>();
+  const now = Date.now();
+  let read = 0;
+  let failed = 0;
+  let done = 0;
+
+  await mapWithConcurrency(targets, TWEET_CONCURRENCY, async (tab) => {
+    const tweet = await fetchTweet(tweetIdFromUrl(tab.url)!);
+    const record: TabRecord = {
+      ...(records.get(tab.url) ?? {}),
+      metaTried: now,
+      metaOutcome: tweet ? "text" : "empty",
+    };
+    if (tweet) {
+      record.meta = {
+        ...record.meta,
+        description: tweet.text.slice(0, 400),
+        siteName: tweet.author ? `${tweet.author} on X` : "X",
+      };
+      read++;
+    } else {
+      // Deleted, protected, or the endpoint declined.
+      failed++;
+    }
+    records.set(tab.url, record);
+    updates.set(tab.url, record);
+    onProgress(++done);
+  });
+
+  await saveRecords(updates);
+  return { read, failed };
+}
+
+/** Load, read and re-discard an explicit list of tabs. */
+async function harvestTabs(
+  allTargets: Array<{ id: number; url: string }>,
+  records: Map<string, TabRecord>,
 ): Promise<HarvestOutcome> {
-  if (targets.length === 0)
-    return { read: 0, titleOnly: 0, empty: 0, timedOut: 0 };
+  // Posts are read over the network. The page has nothing per-post to give a
+  // background tab, and one JSON request beats one page load anyway.
+  const tweets = allTargets.filter((t) => tweetIdFromUrl(t.url));
+  const targets = allTargets.filter((t) => !tweetIdFromUrl(t.url));
+
+  let tweetRead = 0;
+  let tweetFailed = 0;
+  if (tweets.length > 0) {
+    setProgress(`Reading ${tweets.length} posts…`, 0, "No page loads needed.");
+    el("progress").scrollIntoView({ block: "center" });
+    const result = await harvestTweets(tweets, records, (done) =>
+      setProgress(
+        `Reading posts… ${done}/${tweets.length}`,
+        done / tweets.length,
+        "No page loads needed.",
+      ),
+    );
+    tweetRead = result.read;
+    tweetFailed = result.failed;
+  }
+
+  if (targets.length === 0) {
+    return { read: tweetRead, titleOnly: 0, empty: tweetFailed, timedOut: 0 };
+  }
 
   const updates = new Map<string, TabRecord>();
   const now = Date.now();
@@ -345,7 +418,12 @@ async function harvestTabs(
   });
 
   await saveRecords(updates);
-  return { read: withText + titleOnly, titleOnly, empty, timedOut };
+  return {
+    read: withText + titleOnly + tweetRead,
+    titleOnly,
+    empty: empty + tweetFailed,
+    timedOut,
+  };
 }
 
 /**
@@ -1398,21 +1476,27 @@ function renderUnidentified() {
   const note = document.createElement("p");
   note.className = "note";
   note.textContent =
-    "Never loaded, so Chrome has no title for them, and never read, so there " +
-    "is no page text either. Clustering them by meaning would be guesswork — " +
-    "every item on a site looks the same through a URL — so they are grouped " +
-    "by site instead.";
+    "Nothing is known about these but their address: no title, and no page " +
+    "text. Clustering them by meaning would be guesswork, so they are grouped " +
+    "by the account or section in their URL, which is the one real thing the " +
+    "address does carry.";
 
-  // The section says reading them fixes it, so it has to offer to do that.
-  // These are not the same set as the discarded-tab backlog: a tab restored
-  // from a session but never opened is unloaded without being discarded.
+  // Only tabs that might still yield something. A page already read and found
+  // to have no title or description tags at all will not acquire them, and
+  // offering to load it again promises something that cannot happen.
+  const worthReading = live.filter((t) => {
+    const record = state!.records.get(t.url);
+    return !record?.metaOutcome || record.metaOutcome === "timeout";
+  });
+
   const readAll = document.createElement("button");
   readAll.className = "ghost";
-  readAll.textContent = `Read all ${live.length} — one page load each`;
+  readAll.textContent = `Read ${worthReading.length} — one page load each`;
+  readAll.hidden = worthReading.length === 0;
   readAll.addEventListener("click", async () => {
     readAll.disabled = true;
     const { read, titleOnly, empty } = await harvestTabs(
-      live.map((t) => ({ id: t.id, url: t.url })),
+      worthReading.map((t) => ({ id: t.id, url: t.url })),
       state!.records,
     );
     lastHarvest =
@@ -1428,7 +1512,7 @@ function renderUnidentified() {
 
   const byHost = new Map<string, TriageTab[]>();
   for (const tab of live) {
-    const key = tab.host ?? "other";
+    const key = spaceKey(tab);
     if (!byHost.has(key)) byHost.set(key, []);
     byHost.get(key)!.push(tab);
   }
@@ -1464,6 +1548,37 @@ function renderUnidentified() {
     for (const tab of siteTabs) box.append(renderTab(tab));
     host.append(box);
   }
+}
+
+/** Path segments that are the site's plumbing rather than somebody's space. */
+const NOT_A_SPACE = new Set([
+  "search", "login", "signup", "settings", "home", "explore", "about",
+  "help", "privacy", "terms", "i", "intent", "share", "notifications",
+]);
+
+/**
+ * Host plus the first path segment, when that segment names somebody's space:
+ * x.com/AngelList, reddit.com/r, github.com/canvas-medical.
+ *
+ * For pages nothing can be read from, this is the only real information
+ * available, and it is genuinely useful — 77 unreadable x.com tabs are an
+ * undifferentiated pile, but the same tabs split by account are a list of
+ * feeds you can decide about one at a time.
+ */
+function spaceKey(tab: TriageTab): string {
+  const host = tab.host ?? "other";
+  let segment: string | undefined;
+  try {
+    segment = new URL(tab.url).pathname.split("/").filter(Boolean)[0];
+  } catch {
+    return host;
+  }
+  if (!segment) return host;
+  const lower = segment.toLowerCase();
+  if (NOT_A_SPACE.has(lower)) return host;
+  // Ids and slugs are not spaces; a handle is short and wordlike.
+  if (segment.length > 30 || /^[0-9]+$/.test(segment)) return host;
+  return `${host}/${segment}`;
 }
 
 /** Ids closed out of the unidentified list, which has no leaf indices. */

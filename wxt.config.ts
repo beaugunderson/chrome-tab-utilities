@@ -38,6 +38,9 @@ export default defineConfig({
       // are cached by the browser afterward, so this is never hit again.
       "https://huggingface.co/*",
       "https://*.hf.co/*",
+      // Reads x.com posts as JSON. The page itself exposes nothing per-post to
+      // a background tab, and this is one request instead of one page load.
+      "https://cdn.syndication.twimg.com/*",
     ],
     // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
     // default extension CSP omits wasm-unsafe-eval, and this is the most

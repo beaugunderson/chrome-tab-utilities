@@ -38,6 +38,13 @@ const PAGES = [
   ["dupe-b", "Fed holds interest rates steady", "The Federal Reserve left the benchmark interest rate unchanged.", "reprint.local"],
 ];
 
+// Distinct pages that nothing is known about: no <title>, so Chrome falls back to showing the URL — which is what a
+// tab restored from a previous session but never opened looks like, and no
+// description or h1 either. All that is knowable is the URL, so they embed
+// near-identically — calling them duplicates of each other would be wrong, and
+// so would letting them bridge unrelated clusters.
+const BARE_PAGES = ["bare-1", "bare-2", "bare-3"];
+
 // Every fixture page carries a slow image after its content. Real pages are
 // full of these, and they are exactly what `status: "complete"` waits for and
 // DOMContentLoaded does not — so without one here the harvest timing would
@@ -55,12 +62,16 @@ function html(title, description, siteName) {
 </body></html>`;
 }
 
-const routes = new Map(
-  PAGES.map(([slug, title, description, site]) => [
+const routes = new Map([
+  ...PAGES.map(([slug, title, description, site]) => [
     `/${slug}`,
     html(title, description, site),
   ]),
-);
+  ...BARE_PAGES.map((slug) => [
+    `/${slug}`,
+    `<!doctype html><html><head><meta charset="utf-8"></head><body><p>x</p></body></html>`,
+  ]),
+]);
 
 const server = createServer((req, res) => {
   const path = (req.url ?? "").split("?")[0];
@@ -113,8 +124,8 @@ try {
   const extensionId = new URL(worker.url()).host;
   console.log(`extension id: ${extensionId}`);
 
-  console.log(`opening ${PAGES.length} pages…`);
-  for (const [slug] of PAGES) {
+  console.log(`opening ${PAGES.length + BARE_PAGES.length} pages…`);
+  for (const slug of [...PAGES.map((p) => p[0]), ...BARE_PAGES]) {
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/${slug}`, {
       waitUntil: "domcontentloaded",
@@ -130,8 +141,13 @@ try {
   //
   // The tabs are not actually discarded here: discarding a Playwright-attached
   // page takes the whole browser down.
-  const preDiscard = await worker.evaluate(async () => {
-    const tabs = await chrome.tabs.query({ url: "http://localhost:8765/*" });
+  const preDiscard = await worker.evaluate(async (bareSlugs) => {
+    const all = await chrome.tabs.query({ url: "http://localhost:8765/*" });
+    // The bare fixtures have no description by design, so they are not part of
+    // this count.
+    const tabs = all.filter(
+      (t) => !bareSlugs.some((slug) => t.url.endsWith(`/${slug}`)),
+    );
     let withMeta = 0;
     for (const tab of tabs) {
       try {
@@ -144,7 +160,7 @@ try {
       }
     }
     return { asked: tabs.length, withMeta };
-  });
+  }, BARE_PAGES);
   console.log(
     `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
   );
@@ -276,6 +292,43 @@ try {
   console.log(`near-duplicate panel shown: ${dupeVisible}`);
   if (!dupeVisible) {
     failures.push("the identical-story fixture did not register as a duplicate");
+  }
+
+  // The bare fixtures embed almost identically because there is nothing to
+  // read, not because they are the same page. Calling them duplicates is the
+  // false positive this gate exists to prevent.
+  const dupeTitles = await triage.$$eval("#dupes .tab-title", (rows) =>
+    rows.map((r) => r.textContent ?? ""),
+  );
+  const bareInDupes = dupeTitles.filter((t) => t.includes("/bare-")).length;
+  console.log(
+    `near-duplicate rows: ${dupeTitles.length}, of which unread lookalikes: ${bareInDupes}`,
+  );
+  if (bareInDupes > 0) {
+    failures.push(
+      `${bareInDupes} unread lookalike tabs were reported as near-duplicates`,
+    );
+  }
+  // The genuine duplicate must survive the gate.
+  if (!dupeTitles.some((t) => t.includes("Fed holds interest rates steady"))) {
+    failures.push("the real duplicate was lost along with the false positives");
+  }
+
+  // Those same tabs must be kept out of the tree, where they would otherwise
+  // sit equidistant from everything and chain unrelated clusters together.
+  const unknownShown = await triage.isVisible("#unknown");
+  const unknownRows = await triage.$$eval("#unknown .tab-row", (r) => r.length);
+  console.log(`unidentified section: shown=${unknownShown}, ${unknownRows} tabs`);
+  if (unknownRows !== BARE_PAGES.length) {
+    failures.push(
+      `expected ${BARE_PAGES.length} unidentified tabs, found ${unknownRows}`,
+    );
+  }
+  const clusteredBare = await triage.$$eval("main .tab-title", (rows) =>
+    rows.filter((r) => (r.textContent ?? "").includes("/bare-")).length,
+  );
+  if (clusteredBare > 0) {
+    failures.push(`${clusteredBare} unidentified tabs leaked into the clusters`);
   }
 
   const report = async () => {

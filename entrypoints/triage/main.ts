@@ -60,6 +60,9 @@ const HARVEST_CONCURRENCY = 8;
 // slow asset never reported `status: "complete"` within 15s while its metadata
 // was ready at 34ms — waiting on the load event is what made this crawl.
 const HARVEST_LOAD_TIMEOUT_MS = 8000;
+// A page that yielded nothing is not asked again for this long. It might have
+// been down or behind a login rather than genuinely empty.
+const HARVEST_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
   "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey",
@@ -111,6 +114,11 @@ interface State {
    */
   removed: Set<number>;
   dupeGroups: number[][];
+  /**
+   * Tabs known only by their address: never loaded, so no title, and never
+   * read, so no content. Kept out of the tree and listed separately.
+   */
+  unidentified: TriageTab[];
   records: Map<string, TabRecord>;
 }
 
@@ -231,24 +239,31 @@ async function backfillMeta(
 async function harvestDiscarded(
   tabs: chrome.tabs.Tab[],
   records: Map<string, TabRecord>,
-): Promise<number> {
-  const targets = tabs.filter(
-    (t) => t.discarded && t.url?.startsWith("http") && !records.get(t.url)?.meta,
-  );
-  if (targets.length === 0) return 0;
+): Promise<{ read: number; empty: number }> {
+  const targets = harvestTargets(tabs, records);
+  if (targets.length === 0) return { read: 0, empty: 0 };
 
   const updates = new Map<string, TabRecord>();
+  const now = Date.now();
   let done = 0;
+  let empty = 0;
 
   const started = performance.now();
 
   await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
     const caught = await reloadAndCapture(tab.id!);
-    if (caught?.meta) {
-      const record = { ...(records.get(caught.url) ?? {}), meta: caught.meta };
-      records.set(caught.url, record);
-      updates.set(caught.url, record);
-    }
+    // The attempt is recorded whether or not anything came back. Plenty of
+    // pages carry no description, og tags or h1 at all, and without this they
+    // would be reloaded again on every future pass forever.
+    const url = caught?.url ?? tab.url!;
+    const record: TabRecord = {
+      ...(records.get(url) ?? {}),
+      metaTried: now,
+      ...(caught?.meta ? { meta: caught.meta } : {}),
+    };
+    records.set(url, record);
+    updates.set(url, record);
+    if (!caught?.meta) empty++;
     done++;
     const rate = done / ((performance.now() - started) / 1000);
     const left = Math.round((targets.length - done) / Math.max(rate, 0.01));
@@ -260,7 +275,26 @@ async function harvestDiscarded(
   });
 
   await saveRecords(updates);
-  return updates.size;
+  return { read: updates.size - empty, empty };
+}
+
+/**
+ * Discarded tabs worth loading: no metadata yet, and not already tried
+ * recently. Without the second half, pages that simply have nothing to read
+ * would be offered and reloaded on every pass.
+ */
+function harvestTargets(
+  tabs: chrome.tabs.Tab[],
+  records: Map<string, TabRecord>,
+): chrome.tabs.Tab[] {
+  const staleBefore = Date.now() - HARVEST_RETRY_AFTER_MS;
+  return tabs.filter((t) => {
+    if (!t.discarded || !t.url?.startsWith("http")) return false;
+    const record = records.get(t.url);
+    if (record?.meta) return false;
+    // Retried eventually, since a page can be empty because it failed to load.
+    return (record?.metaTried ?? 0) < staleBefore;
+  });
 }
 
 function formatDuration(seconds: number): string {
@@ -424,6 +458,7 @@ async function run() {
   setProgress("Clustering…", null);
   const now = Date.now();
   const tabs: TriageTab[] = [];
+  const unidentified: TriageTab[] = [];
   for (let i = 0; i < raw.length; i++) {
     const t = raw[i];
     const record = records.get(urls[i]);
@@ -431,7 +466,8 @@ async function run() {
     // lastAccessed resets on browser restart, so fall back to the snapshot the
     // background keeps per URL, whichever is more recent.
     const lastSeen = Math.max(t.lastAccessed ?? 0, record.seen ?? 0);
-    tabs.push({
+    const bucket = isUnidentified(t.title, urls[i], record) ? unidentified : tabs;
+    bucket.push({
       id: t.id!,
       windowId: t.windowId!,
       title: t.title || urls[i],
@@ -470,8 +506,18 @@ async function run() {
     withMeta: tabs.filter((t) => records.get(t.url)?.meta).length,
     collapsed: new Set(),
     removed: new Set(),
+    unidentified,
     selected: new Set(),
-    dupeGroups: groupDuplicates(nearDuplicatePairs(inputs, NEAR_DUPLICATE_SIMILARITY)),
+    dupeGroups: groupDuplicates(
+      nearDuplicatePairs(
+        inputs,
+        NEAR_DUPLICATE_SIMILARITY,
+        // Only tabs whose page has actually been read can be called
+        // duplicates. A title and a URL shape are not enough: every tweet by
+        // one author looks the same through that lens.
+        tabs.map((t) => hasReadableContent(records.get(t.url))),
+      ),
+    ),
     records,
   };
 
@@ -480,6 +526,39 @@ async function run() {
   parkSliderAt(previousThreshold ?? DEFAULT_INCONSISTENCY);
   render();
   offerBacklog(raw, records);
+}
+
+/**
+ * Whether a page's own words were ever read, as opposed to only its title and
+ * URL. A description or a heading counts; og:type and a site name do not,
+ * since every page on a site shares those.
+ */
+function hasReadableContent(record: TabRecord | undefined): boolean {
+  const meta = record?.meta;
+  return Boolean(meta?.description?.trim() || meta?.heading?.trim());
+}
+
+/**
+ * A tab Chrome has never loaded shows its URL where the title would be, and if
+ * nothing has read the page either then all that is known about it is its
+ * address.
+ *
+ * These cannot be clustered honestly. Every tweet by one author, every issue in
+ * one repo, reduces to the same few words — the host and a path shape — so they
+ * embed identically, pile into one indistinguishable lump, and act as bridges
+ * that drag unrelated clusters together. They get their own section instead.
+ */
+function isUnidentified(
+  title: string | undefined,
+  url: string,
+  record: TabRecord | undefined,
+): boolean {
+  if (hasReadableContent(record)) return false;
+  const trimmed = (title ?? "").trim();
+  if (!trimmed) return true;
+  // Chrome's placeholder is the URL, sometimes with the scheme stripped.
+  const bare = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return trimmed === url || trimmed === bare;
 }
 
 /** Merge overlapping duplicate pairs into groups via union-find. */
@@ -538,6 +617,8 @@ function formatIdle(days: number): string {
 // ===== Rendering =====
 
 let backlogDismissed = false;
+/** Outcome of the last backlog pass, shown in the stats line. */
+let lastHarvest = "";
 
 /**
  * Offer to read the discarded tabs, stating the cost. Auto-discard means most
@@ -550,9 +631,7 @@ function offerBacklog(tabs: chrome.tabs.Tab[], records: Map<string, TabRecord>) 
     banner.hidden = true;
     return;
   }
-  const targets = tabs.filter(
-    (t) => t.discarded && t.url?.startsWith("http") && !records.get(t.url)?.meta,
-  );
+  const targets = harvestTargets(tabs, records);
   if (targets.length === 0) {
     banner.hidden = true;
     return;
@@ -566,8 +645,12 @@ function offerBacklog(tabs: chrome.tabs.Tab[], records: Map<string, TabRecord>) 
 
   el("backlog-run").onclick = async () => {
     banner.hidden = true;
-    const added = await harvestDiscarded(tabs, records);
-    setProgress(`Read ${added} tabs. Re-clustering…`, null);
+    const { read, empty } = await harvestDiscarded(tabs, records);
+    lastHarvest =
+      empty > 0
+        ? `Read ${read} tabs; ${empty} had no description or heading to read.`
+        : `Read ${read} tabs.`;
+    setProgress(`${lastHarvest} Re-clustering…`, null);
     await run();
   };
   el("backlog-dismiss").onclick = () => {
@@ -732,6 +815,7 @@ function render() {
     `${live} tabs · ${ranked.length} clusters · ${liveDupes} near-duplicates · ` +
     `${metaShare}% with page metadata` +
     (closed > 0 ? ` · ${closed} closed this session` : "");
+  if (lastHarvest) el("stats").textContent += ` · ${lastHarvest}`;
 
   const host = el("clusters");
   if (ranked.length === 0) {
@@ -742,6 +826,7 @@ function render() {
         ? `All ${closed} tabs closed. Rescan to start over.`
         : "Nothing to triage.";
     host.replaceChildren(empty);
+    renderUnidentified();
     renderDuplicates();
     syncChecks();
     return;
@@ -753,6 +838,7 @@ function render() {
   );
 
   updateFoldAllLabel();
+  renderUnidentified();
   renderDuplicates();
   syncChecks();
 }
@@ -1095,7 +1181,10 @@ function forgetTabs(ids: number[]) {
   for (let i = 0; i < state.tabs.length; i++) {
     if (doomed.has(state.tabs[i].id)) state.removed.add(i);
   }
-  for (const id of ids) state.selected.delete(id);
+  for (const id of ids) {
+    state.selected.delete(id);
+    unidentifiedClosed.add(id);
+  }
 }
 
 async function applyAsGroup(tabs: TriageTab[], label: string) {
@@ -1144,6 +1233,78 @@ function hashString(text: string): number {
 
 // ===== Duplicates and selection =====
 
+/**
+ * Tabs known only by their address, grouped by host. Nothing here can be
+ * clustered by meaning, so the useful unit is the site.
+ */
+function renderUnidentified() {
+  const host = el("unknown");
+  const live = (state?.unidentified ?? []).filter(
+    (t) => !unidentifiedClosed.has(t.id),
+  );
+  if (live.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.replaceChildren();
+
+  const heading = document.createElement("h2");
+  heading.textContent = `${live.length} tabs known only by their URL`;
+
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent =
+    "Never loaded, so Chrome has no title for them, and never read, so there " +
+    "is no page text either. Clustering them by meaning would be guesswork — " +
+    "every item on a site looks the same through a URL — so they are grouped " +
+    "by site instead. Reading them makes them cluster properly.";
+
+  host.append(heading, note);
+
+  const byHost = new Map<string, TriageTab[]>();
+  for (const tab of live) {
+    const key = tab.host ?? "other";
+    if (!byHost.has(key)) byHost.set(key, []);
+    byHost.get(key)!.push(tab);
+  }
+
+  for (const [site, siteTabs] of [...byHost].sort(
+    (a, b) => b[1].length - a[1].length,
+  )) {
+    const box = document.createElement("div");
+    box.className = "dupe-group";
+
+    const header = document.createElement("div");
+    header.className = "cluster-header";
+    const name = document.createElement("span");
+    name.className = "cluster-name";
+    name.textContent = site;
+    const meta = document.createElement("span");
+    meta.className = "cluster-meta";
+    meta.textContent = `${siteTabs.length} tab${siteTabs.length === 1 ? "" : "s"}`;
+
+    const closeAll = document.createElement("button");
+    closeAll.className = "ghost small";
+    closeAll.textContent = "Close all";
+    closeAll.addEventListener("click", () => {
+      const ids = siteTabs.map((t) => t.id);
+      void removeTabs(ids).then(() => {
+        for (const id of ids) unidentifiedClosed.add(id);
+        render();
+      });
+    });
+
+    header.append(name, meta, closeAll);
+    box.append(header);
+    for (const tab of siteTabs) box.append(renderTab(tab));
+    host.append(box);
+  }
+}
+
+/** Ids closed out of the unidentified list, which has no leaf indices. */
+const unidentifiedClosed = new Set<number>();
+
 function renderDuplicates() {
   const host = el("dupes");
   // A set stops being a duplicate set once all but one of it has been closed.
@@ -1162,10 +1323,19 @@ function renderDuplicates() {
   const total = groups.reduce((sum, g) => sum + g.length - 1, 0);
   heading.textContent = `${total} near-duplicate tabs in ${groups.length} sets`;
 
+  const unread = state.tabs.filter(
+    (t, i) => !state!.removed.has(i) && !hasReadableContent(state!.records.get(t.url)),
+  ).length;
+
   const note = document.createElement("p");
   note.className = "note";
   note.textContent =
-    "Matched on meaning rather than URL, so the same story on three sites counts.";
+    "Matched on the page's own text rather than its URL, so the same story on " +
+    "three sites counts." +
+    (unread > 0
+      ? ` ${unread} tabs are excluded because their page has not been read; ` +
+        "title and URL alone make every item on a site look alike."
+      : "");
 
   const keepAll = document.createElement("button");
   keepAll.className = "ghost small";

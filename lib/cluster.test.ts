@@ -445,6 +445,20 @@ describe("nearDuplicatePairs", () => {
     expect(nearDuplicatePairs(items, 0.95)).toEqual([[0, 1]]);
   });
 
+  it("skips tabs whose page was never read", () => {
+    // Two different tweets by one author: nothing has been read, so their
+    // feature text is the same handful of words and the vectors match. That is
+    // an artifact of having no content, not evidence of a duplicate.
+    const items = [onCircle(0), onCircle(0.5), onCircle(1)].map(plain);
+    expect(nearDuplicatePairs(items, 0.95)).toHaveLength(3);
+    expect(nearDuplicatePairs(items, 0.95, [false, false, false])).toEqual([]);
+  });
+
+  it("still pairs read tabs, and never pairs a read one with an unread one", () => {
+    const items = [onCircle(0), onCircle(0.5), onCircle(1)].map(plain);
+    expect(nearDuplicatePairs(items, 0.95, [true, true, false])).toEqual([[0, 1]]);
+  });
+
   it("ignores structural factors, matching on text alone", () => {
     // Same domain, unrelated content: emphatically not a duplicate.
     const items: ClusterInput[] = [

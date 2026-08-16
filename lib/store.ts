@@ -17,6 +17,13 @@ export interface TabRecord {
   /** Feature fingerprint the vector was computed from. */
   fp?: string;
   meta?: PageMeta;
+  /**
+   * When the backlog harvest last loaded this page, whether or not it found
+   * anything. Plenty of pages carry no description, og tags or h1 at all, and
+   * without recording the attempt they are reloaded again on every pass
+   * forever.
+   */
+  metaTried?: number;
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

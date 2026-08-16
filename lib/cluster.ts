@@ -425,18 +425,29 @@ export function sortedInconsistencies(maxScores: Float64Array): number[] {
 }
 
 /**
- * Index pairs whose cosine similarity is at or above `threshold`. Deliberately
- * reads raw embeddings rather than the matrix from distanceMatrix(), since the
+ * Index pairs whose cosine similarity is at or above `threshold`.
+ *
+ * Reads raw embeddings rather than the matrix from distanceMatrix(), since the
  * structural factors there would report same-domain tabs as duplicates of each
  * other on shape alone.
+ *
+ * `eligible` marks the tabs whose page was actually read. Two tabs nobody has
+ * read embed almost identically whenever their titles and URL shapes match —
+ * a dozen different tweets by one author all reduce to the same handful of
+ * words — and calling those duplicates is a claim the data cannot support. It
+ * is a statement about content, so it needs content.
  */
 export function nearDuplicatePairs(
   items: ClusterInput[],
   threshold: number,
+  eligible?: boolean[],
 ): Array<[number, number]> {
   const pairs: Array<[number, number]> = [];
+  const usable = (i: number) => eligible === undefined || eligible[i];
   for (let i = 0; i < items.length; i++) {
+    if (!usable(i)) continue;
     for (let j = i + 1; j < items.length; j++) {
+      if (!usable(j)) continue;
       if (dot(items[i].vec, items[j].vec) >= threshold) pairs.push([i, j]);
     }
   }

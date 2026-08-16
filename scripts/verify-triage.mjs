@@ -382,6 +382,54 @@ try {
     failures.push(`Expand all restored ${reopened}, expected ${openRows}`);
   }
 
+  // Ticking every tab in a cluster has to tick the cluster itself, and leave
+  // it indeterminate while only some are ticked.
+  await setCut(500);
+  const checkState = await triage.evaluate(() => {
+    const cluster = [...document.querySelectorAll("main > .cluster")].find(
+      (c) => c.querySelectorAll(".cluster-body > .tab-row").length >= 2,
+    );
+    const box = cluster.querySelector(".cluster-check");
+    const rows = [...cluster.querySelectorAll(".cluster-body > .tab-row")];
+    const boxes = rows.map((r) => r.querySelector('input[type="checkbox"]'));
+
+    const click = (b) => {
+      b.click();
+    };
+    const read = () => ({ checked: box.checked, mixed: box.indeterminate });
+
+    const start = read();
+    click(boxes[0]);
+    const partial = read();
+    for (const b of boxes.slice(1)) click(b);
+    const all = read();
+    click(boxes[0]);
+    const unticked = read();
+    return { start, partial, all, unticked, count: boxes.length };
+  });
+
+  console.log(
+    `cluster checkbox over ${checkState.count} tabs: ` +
+      `none=${JSON.stringify(checkState.start)} ` +
+      `some=${JSON.stringify(checkState.partial)} ` +
+      `all=${JSON.stringify(checkState.all)}`,
+  );
+  if (checkState.start.checked || checkState.start.mixed) {
+    failures.push("cluster checkbox was not clear with nothing selected");
+  }
+  if (!checkState.partial.mixed || checkState.partial.checked) {
+    failures.push("cluster checkbox is not indeterminate with some tabs ticked");
+  }
+  if (!checkState.all.checked || checkState.all.mixed) {
+    failures.push("cluster checkbox did not become checked with every tab ticked");
+  }
+  if (checkState.unticked.checked || !checkState.unticked.mixed) {
+    failures.push("cluster checkbox stayed checked after unticking a tab");
+  }
+
+  await triage.reload();
+  await triage.waitForSelector("#granularity:not([hidden])", { timeout: 120000 });
+
   // Closing a tab must not re-cluster. Rebuilding the tree over the remaining
   // tabs rescales the slider and reshuffles the groups, so every close used to
   // silently change the granularity underneath you.

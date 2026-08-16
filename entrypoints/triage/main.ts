@@ -620,6 +620,31 @@ function rank(clusters: CutCluster[], context: RenderContext) {
     .sort((a, b) => closureScore(b.tabs, b.dupes) - closureScore(a.tabs, a.dupes));
 }
 
+/**
+ * Every checkbox currently on the page, so a click can update the others
+ * without a full re-render. Rebuilt by each render.
+ *
+ * Cluster boxes are tri-state: checked when all their tabs are selected,
+ * indeterminate when only some are. That is what makes selecting every tab in
+ * a group show the group itself as selected, at every level of nesting, since
+ * a parent's tab list contains all of its descendants'.
+ */
+const rowChecks: Array<{ box: HTMLInputElement; tabId: number }> = [];
+const groupChecks: Array<{ box: HTMLInputElement; tabIds: number[] }> = [];
+
+function syncChecks() {
+  if (!state) return;
+  for (const { box, tabId } of rowChecks) {
+    box.checked = state.selected.has(tabId);
+  }
+  for (const { box, tabIds } of groupChecks) {
+    const selected = tabIds.filter((id) => state!.selected.has(id)).length;
+    box.checked = selected > 0 && selected === tabIds.length;
+    box.indeterminate = selected > 0 && selected < tabIds.length;
+  }
+  renderSelection();
+}
+
 let renderQueued = false;
 
 /**
@@ -637,6 +662,9 @@ function scheduleRender() {
 
 function render() {
   if (!state) return;
+  // The boxes about to be discarded must not be synced against later.
+  rowChecks.length = 0;
+  groupChecks.length = 0;
   const threshold = currentThreshold();
   const context: RenderContext = {
     members: collectMembers(state.merges, state.tabs.length),
@@ -678,7 +706,7 @@ function render() {
         : "Nothing to triage.";
     host.replaceChildren(empty);
     renderDuplicates();
-    renderSelection();
+    syncChecks();
     return;
   }
   host.replaceChildren(
@@ -689,7 +717,7 @@ function render() {
 
   updateFoldAllLabel();
   renderDuplicates();
-  renderSelection();
+  syncChecks();
 }
 
 function renderCluster(
@@ -734,13 +762,17 @@ function renderCluster(
   const check = document.createElement("input");
   check.type = "checkbox";
   check.className = "cluster-check";
-  check.checked = tabs.every((t) => state!.selected.has(t.id));
+  check.title = "Select every tab in this cluster";
+  const clusterTabIds = tabs.map((t) => t.id);
+  groupChecks.push({ box: check, tabIds: clusterTabIds });
   check.addEventListener("change", () => {
-    for (const tab of tabs) {
-      if (check.checked) state!.selected.add(tab.id);
-      else state!.selected.delete(tab.id);
+    for (const id of clusterTabIds) {
+      if (check.checked) state!.selected.add(id);
+      else state!.selected.delete(id);
     }
-    render();
+    // Updating the other boxes in place rather than re-rendering keeps the
+    // page from rebuilding hundreds of rows on every click.
+    syncChecks();
   });
 
   const name = document.createElement("span");
@@ -856,11 +888,13 @@ function renderTab(tab: TriageTab): HTMLElement {
 
   const check = document.createElement("input");
   check.type = "checkbox";
-  check.checked = state!.selected.has(tab.id);
+  rowChecks.push({ box: check, tabId: tab.id });
   check.addEventListener("change", () => {
     if (check.checked) state!.selected.add(tab.id);
     else state!.selected.delete(tab.id);
-    renderSelection();
+    // Ticking the last unticked sibling has to tick the cluster above it, and
+    // its parent in turn.
+    syncChecks();
   });
 
   const icon = document.createElement("img");

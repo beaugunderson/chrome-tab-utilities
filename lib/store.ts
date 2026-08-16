@@ -44,6 +44,8 @@ export interface TabRecord {
    * indistinguishable from the outside.
    */
   lastTitleSeen?: string;
+  /** Where the page ended up, when that was not the tab's own URL. */
+  redirectedTo?: string;
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

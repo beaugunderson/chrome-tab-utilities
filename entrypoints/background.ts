@@ -107,8 +107,8 @@ export default defineBackground(() => {
   void updateDuplicateBadge();
 
   // Popup (`action.default_popup`) dispatches user-chosen actions via message.
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    void handlePopupMessage(msg).then(sendResponse);
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    void handlePopupMessage(msg, sender).then(sendResponse);
     return true; // keep channel open for async response
   });
 
@@ -141,11 +141,19 @@ interface PageMetaMessage {
   meta: PageMeta;
 }
 
-async function handlePopupMessage(msg: PopupMessage | unknown) {
+async function handlePopupMessage(
+  msg: PopupMessage | unknown,
+  sender?: chrome.runtime.MessageSender,
+) {
   if (typeof msg !== "object" || msg === null || !("type" in msg)) return;
 
   if ((msg as PageMetaMessage).type === "page-meta") {
-    const { url, title, meta } = msg as PageMetaMessage;
+    const { title, meta } = msg as PageMetaMessage;
+    // Keyed by the tab's URL, not the one the page reports. A page that
+    // redirects reports where it landed, and filing the result there leaves
+    // the tab's own record empty: read successfully, stored under an address
+    // nothing looks up, and still counted as never read.
+    const url = sender?.tab?.url ?? (msg as PageMetaMessage).url;
     const patch: Partial<TabRecord> = {};
     // An empty payload only means the page had nothing; storing it would look
     // like the page had been read.

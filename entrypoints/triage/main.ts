@@ -288,7 +288,12 @@ async function harvestTabs(
     // The attempt is recorded whether or not anything came back. Plenty of
     // pages carry no description, og tags or h1 at all, and without this they
     // would be reloaded again on every future pass forever.
-    const url = caught?.url ?? tab.url;
+    // Always keyed by the tab's own URL, which is what everything else looks
+    // up. A page that redirects reports the URL it landed on, and storing
+    // under that leaves the tab's record untouched — read successfully, filed
+    // under an address nothing asks about, and still listed as unknown.
+    const url = tab.url;
+    const landedElsewhere = Boolean(caught && caught.url !== tab.url);
     const gotMeta = hasMetaContent(caught?.meta);
     const gotTitle = isRealTitle(caught?.title, url);
     const outcome = gotMeta
@@ -303,6 +308,7 @@ async function harvestTabs(
       metaTried: now,
       metaOutcome: outcome,
       ...(caught?.title ? { lastTitleSeen: caught.title.slice(0, 120) } : {}),
+      ...(landedElsewhere ? { redirectedTo: caught!.url.slice(0, 200) } : {}),
       ...(gotMeta ? { meta: caught!.meta } : {}),
       ...(gotTitle ? { title: caught!.title } : {}),
     };
@@ -1470,6 +1476,7 @@ function unidentifiedDiagnosis(live: TriageTab[]): HTMLElement {
   const counts = new Map<string, number>();
   const samples: string[] = [];
   let untried = 0;
+  let redirected = 0;
   for (const tab of live) {
     const record = state!.records.get(tab.url);
     if (!record?.metaOutcome) {
@@ -1477,6 +1484,7 @@ function unidentifiedDiagnosis(live: TriageTab[]): HTMLElement {
       continue;
     }
     counts.set(record.metaOutcome, (counts.get(record.metaOutcome) ?? 0) + 1);
+    if (record.redirectedTo) redirected++;
     if (record.lastTitleSeen && samples.length < 3) samples.push(record.lastTitleSeen);
   }
 
@@ -1489,6 +1497,7 @@ function unidentifiedDiagnosis(live: TriageTab[]): HTMLElement {
     ([outcome, n]) => `${n} ${OUTCOME_WORDING[outcome] ?? outcome}`,
   );
   if (untried > 0) parts.push(`${untried} not tried yet`);
+  if (redirected > 0) parts.push(`${redirected} redirected somewhere else`);
   line.textContent =
     `Last attempt: ${parts.join(", ")}.` +
     (samples.length > 0
@@ -1604,9 +1613,22 @@ function exportSnapshot() {
         tags: t.tags,
       })),
     })),
+    // Per-tab evidence, so a disappointing harvest can be diagnosed from the
+    // export rather than from a count that barely moved.
     unidentified: state.unidentified
       .filter((t) => !unidentifiedClosed.has(t.id))
-      .map((t) => ({ title: t.title, url: t.url, host: t.host })),
+      .map((t) => {
+        const record = state!.records.get(t.url);
+        return {
+          url: t.url,
+          host: t.host,
+          chromeTitle: t.title,
+          outcome: record?.metaOutcome,
+          reportedTitle: record?.lastTitleSeen,
+          redirectedTo: record?.redirectedTo,
+          meta: record?.meta,
+        };
+      }),
     nearDuplicates: state.dupeGroups.map((group) =>
       group.map((i) => ({ title: state!.tabs[i].title, url: state!.tabs[i].url })),
     ),

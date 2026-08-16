@@ -68,6 +68,13 @@ const TITLE_ONLY_PAGES = [
 // look identical either way and prove nothing.
 const SLOW_ASSET_MS = 1500;
 
+// A page that redirects. A server redirect moves the tab itself, so the record
+// belongs at the destination; what matters is that the result is not lost
+// between the URL asked for and the URL arrived at.
+const REDIRECT_FROM = "redirect-from";
+const REDIRECT_TO = "redirect-to";
+const REDIRECT_TITLE = "Sourdough hydration troubleshooting guide";
+
 function html(title, description, siteName) {
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>${title}</title>
@@ -115,6 +122,16 @@ setTimeout(() => { document.title = ${JSON.stringify(title)}; }, ${SPA_RENDER_MS
 
 const server = createServer((req, res) => {
   const path = (req.url ?? "").split("?")[0];
+  if (path === `/${REDIRECT_FROM}`) {
+    res.writeHead(302, { location: `/${REDIRECT_TO}` }).end();
+    return;
+  }
+  if (path === `/${REDIRECT_TO}`) {
+    res
+      .writeHead(200, { "content-type": "text/html; charset=utf-8" })
+      .end(html(REDIRECT_TITLE, "Fixing slack dough and weak gluten.", "baking.local"));
+    return;
+  }
   if (path === "/slow.png") {
     setTimeout(() => {
       res.writeHead(200, { "content-type": "image/png" }).end(Buffer.alloc(64));
@@ -165,7 +182,7 @@ try {
   console.log(`extension id: ${extensionId}`);
 
   console.log(`opening ${PAGES.length + SPA_PAGES.length + TITLE_ONLY_PAGES.length + BARE_PAGES.length} pages…`);
-  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), ...BARE_PAGES]) {
+  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM, ...BARE_PAGES]) {
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/${slug}`, {
       waitUntil: "domcontentloaded",
@@ -203,6 +220,21 @@ try {
     return out;
   }, TITLE_ONLY_PAGES.map((p) => p[0]));
   console.log(`title-only pages captured: ${JSON.stringify(titlesKept)}`);
+
+  // A server redirect moves the tab itself, so the record belongs under the
+  // destination — that is the URL the tab now has and the only one anything
+  // looks up. What must not happen is the result going missing entirely.
+  const redirectRecord = await worker.evaluate(async (to) => {
+    const key = `tab:http://localhost:8765/${to}`;
+    const stored = await chrome.storage.local.get(key);
+    return stored[key] ?? null;
+  }, REDIRECT_TO);
+  console.log(
+    `redirected page recorded at its destination: ${Boolean(redirectRecord?.meta?.description)}`,
+  );
+  if (!redirectRecord?.meta?.description) {
+    failures.push("a redirected page produced no record at all");
+  }
   for (const [i, [, expected]] of TITLE_ONLY_PAGES.entries()) {
     if (titlesKept[i] !== expected) {
       failures.push(
@@ -243,7 +275,7 @@ try {
       }
     }
     return { asked: tabs.length, withMeta };
-  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0])]);
+  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0]), ...TITLE_ONLY_PAGES.map((p) => p[0]), REDIRECT_FROM]);
   console.log(
     `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
   );

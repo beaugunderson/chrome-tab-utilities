@@ -9,6 +9,12 @@ export interface PageMeta {
   heading?: string;
 }
 
+/** Whether harvested metadata says anything about the page. */
+export function hasMetaContent(meta: PageMeta | undefined): boolean {
+  if (!meta) return false;
+  return Boolean(meta.description || meta.heading || meta.section || meta.siteName);
+}
+
 export interface FeatureSource {
   title?: string;
   url?: string;

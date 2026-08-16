@@ -426,8 +426,13 @@ export function sortedInconsistencies(maxScores: Float64Array): number[] {
 
 /** Largest share of all tabs one cluster may hold at the opening cut. */
 const DEFAULT_LARGEST_SHARE = 0.1;
-/** Floor for that cap, so a small tab set does not collapse to one group. */
-const DEFAULT_LARGEST_FLOOR = 6;
+/**
+ * Floor for that cap, so a small tab set does not collapse to one group. Kept
+ * low because on a small set a tenth of the tabs is a fraction of a tab, and a
+ * generous floor is a large share: at 18 tabs a floor of 6 permits a third of
+ * them in one cluster, which was enough to fuse two unrelated topics.
+ */
+const DEFAULT_LARGEST_FLOOR = 4;
 
 /**
  * The opening cut: the coarsest threshold at which no cluster has swallowed

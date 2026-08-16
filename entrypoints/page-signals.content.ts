@@ -15,6 +15,9 @@ interface PageMeta {
 }
 
 const MAX_FIELD_LENGTH = 400;
+/** How long to keep watching a page that had nothing at DOMContentLoaded. */
+const SETTLE_TIMEOUT_MS = 5000;
+const SETTLE_POLL_MS = 250;
 
 function attr(selector: string, attribute = "content"): string | undefined {
   const el = document.querySelector(selector);
@@ -119,15 +122,50 @@ export default defineContentScript({
       }
     });
 
-    const reportMeta = () => {
-      const meta = harvest();
-      // Nothing useful on this page; skip the round trip.
-      if (Object.values(meta).every((v) => v === undefined)) return;
+    const send = (meta: PageMeta, final: boolean) => {
       // The background may be asleep, and a dropped harvest is not worth
       // retrying: the next visit re-sends it.
       void chrome.runtime
-        .sendMessage({ type: "page-meta", url: location.href, meta })
+        .sendMessage({ type: "page-meta", url: location.href, meta, final })
         .catch(() => {});
+    };
+
+    const hasSomething = (meta: PageMeta) =>
+      Boolean(meta.description || meta.heading || meta.section);
+
+    /** A title the page set itself, rather than Chrome showing the URL. */
+    const hasRealTitle = () => {
+      const title = document.title.trim();
+      return Boolean(title) && !location.href.includes(title);
+    };
+
+    /**
+     * Report as soon as there is something to report, and keep looking for a
+     * short while if there is not.
+     *
+     * A single read at DOMContentLoaded is too early for a JS app: on x.com
+     * there is no description, no heading, and not even a title until the app
+     * renders. Reading once and giving up left 84 of 87 such tabs with nothing,
+     * which is the entire population this was built for. Pages that are ready
+     * immediately still report immediately, so nothing slows down.
+     */
+    const reportMeta = () => {
+      const attempt = (final: boolean) => {
+        const meta = harvest();
+        if (final || hasSomething(meta) || hasRealTitle()) {
+          send(meta, final);
+          return true;
+        }
+        return false;
+      };
+
+      if (attempt(false)) return;
+
+      const startedAt = Date.now();
+      const timer = setInterval(() => {
+        const expired = Date.now() - startedAt >= SETTLE_TIMEOUT_MS;
+        if (attempt(expired) || expired) clearInterval(timer);
+      }, SETTLE_POLL_MS);
     };
 
     if (document.readyState === "loading") {

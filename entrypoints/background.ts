@@ -1,5 +1,5 @@
 import { parse as parseTld } from "tldts";
-import type { PageMeta } from "../lib/features";
+import { type PageMeta, hasMetaContent } from "../lib/features";
 import { type DiscardPolicy, selectDiscardCandidates } from "../lib/discard";
 import { patchRecord } from "../lib/store";
 import { removeTabs } from "../lib/tabs";
@@ -145,7 +145,9 @@ async function handlePopupMessage(msg: PopupMessage | unknown) {
 
   if ((msg as PageMetaMessage).type === "page-meta") {
     const { url, meta } = msg as PageMetaMessage;
-    await patchRecord(url, { meta });
+    // An empty payload only means the page had nothing; storing it would look
+    // like the page had been read.
+    if (hasMetaContent(meta)) await patchRecord(url, { meta });
     return { ok: true };
   }
 

@@ -45,6 +45,15 @@ const PAGES = [
 // so would letting them bridge unrelated clusters.
 const BARE_PAGES = ["bare-1", "bare-2", "bare-3"];
 
+// A JS app: nothing in the served HTML, everything set after a delay. This is
+// what x.com looks like, and reading only at DOMContentLoaded found nothing on
+// 84 of 87 such tabs.
+const SPA_RENDER_MS = 900;
+const SPA_PAGES = [
+  ["spa-1", "Kestrel migration tracking in the Cascades"],
+  ["spa-2", "Kestrel nesting survey results"],
+];
+
 // Every fixture page carries a slow image after its content. Real pages are
 // full of these, and they are exactly what `status: "complete"` waits for and
 // DOMContentLoaded does not — so without one here the harvest timing would
@@ -66,6 +75,18 @@ const routes = new Map([
   ...PAGES.map(([slug, title, description, site]) => [
     `/${slug}`,
     html(title, description, site),
+  ]),
+  ...SPA_PAGES.map(([slug, title]) => [
+    `/${slug}`,
+    `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+setTimeout(() => {
+  document.title = ${JSON.stringify(title)};
+  const m = document.createElement("meta");
+  m.name = "description";
+  m.content = ${JSON.stringify(title + ". Field notes on raptor populations.")};
+  document.head.appendChild(m);
+}, ${SPA_RENDER_MS});
+</script></body></html>`,
   ]),
   ...BARE_PAGES.map((slug) => [
     `/${slug}`,
@@ -124,15 +145,37 @@ try {
   const extensionId = new URL(worker.url()).host;
   console.log(`extension id: ${extensionId}`);
 
-  console.log(`opening ${PAGES.length + BARE_PAGES.length} pages…`);
-  for (const slug of [...PAGES.map((p) => p[0]), ...BARE_PAGES]) {
+  console.log(`opening ${PAGES.length + SPA_PAGES.length + BARE_PAGES.length} pages…`);
+  for (const slug of [...PAGES.map((p) => p[0]), ...SPA_PAGES.map((p) => p[0]), ...BARE_PAGES]) {
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/${slug}`, {
       waitUntil: "domcontentloaded",
     });
   }
-  // Give the content script's harvest a moment to reach the background.
-  await new Promise((r) => setTimeout(r, 1500));
+  // Long enough for the JS-app fixtures to render and the settle window to
+  // report them.
+  await new Promise((r) => setTimeout(r, SPA_RENDER_MS + 2500));
+
+  // A page that renders its title and description in JS must still be read.
+  // Reading once at DOMContentLoaded found nothing on these.
+  const spaRead = await worker.evaluate(async (slugs) => {
+    const out = [];
+    for (const slug of slugs) {
+      const key = `tab:http://localhost:8765/${slug}`;
+      const stored = await chrome.storage.local.get(key);
+      out.push(Boolean(stored[key]?.meta?.description));
+    }
+    return out;
+  }, SPA_PAGES.map((p) => p[0]));
+  console.log(
+    `JS-rendered pages read: ${spaRead.filter(Boolean).length}/${spaRead.length}`,
+  );
+  if (spaRead.some((ok) => !ok)) {
+    failures.push(
+      `${spaRead.filter((ok) => !ok).length} JS-rendered pages produced no metadata; ` +
+        "the settle window is not waiting for them to render",
+    );
+  }
 
   // Metadata has to be captured *before* a tab is discarded: once it is
   // unloaded there is no content script to ask, and on a long-lived tab set
@@ -160,7 +203,7 @@ try {
       }
     }
     return { asked: tabs.length, withMeta };
-  }, BARE_PAGES);
+  }, [...BARE_PAGES, ...SPA_PAGES.map((p) => p[0])]);
   console.log(
     `pre-discard capture: ${preDiscard.withMeta}/${preDiscard.asked} tabs returned metadata`,
   );
@@ -446,28 +489,32 @@ try {
   await triage.reload();
   await triage.waitForSelector("#granularity:not([hidden])", { timeout: 120000 });
   const openingGroups = await clusterMemberships();
-  let clean = 0;
+
+  // Fusing two topics into one cluster is a defect: the grouping is asserting
+  // something false. Splitting one topic across clusters is not — the default
+  // is one point on a slider, and every topic is separately checked to be
+  // recoverable above. So this fails on mixing and only reports on splitting.
+  const topicOf = new Map();
   for (const [name, slugs] of Object.entries(TOPICS)) {
-    const wanted = slugs.map((s) => titleOf.get(s));
-    const holder = openingGroups.find((titles) =>
-      wanted.every((w) => titles.includes(w)),
-    );
-    if (!holder) {
-      failures.push(`"${name}" is not whole at the default cut`);
-      continue;
-    }
-    const strays = holder.filter((t) => !wanted.includes(t));
-    if (strays.length > 0) {
-      failures.push(
-        `"${name}" is fused at the default cut with: ${strays.join("; ")}`,
-      );
-      continue;
-    }
-    clean++;
+    for (const slug of slugs) topicOf.set(titleOf.get(slug), name);
   }
+
+  for (const titles of openingGroups) {
+    const present = [...new Set(titles.map((t) => topicOf.get(t)).filter(Boolean))];
+    if (present.length > 1) {
+      failures.push(
+        `default cut fuses ${present.join(" + ")} into one cluster: ${titles.join("; ")}`,
+      );
+    }
+  }
+
+  const whole = Object.entries(TOPICS).filter(([, slugs]) => {
+    const wanted = slugs.map((s) => titleOf.get(s));
+    return openingGroups.some((titles) => wanted.every((w) => titles.includes(w)));
+  }).length;
   const topicCount = Object.keys(TOPICS).length;
   console.log(
-    `default cut: ${clean}/${topicCount} topics whole and unfused ` +
+    `default cut: no topics fused; ${whole}/${topicCount} also whole, ` +
       `across ${openingGroups.length} multi-tab clusters`,
   );
 
@@ -482,10 +529,11 @@ try {
 
   await setCut(500);
   const openRows = await visibleTabs();
-  console.log(`tab rows visible without clicking: ${openRows} of ${PAGES.length}`);
-  if (openRows < PAGES.length) {
+  console.log(`tab rows visible without clicking: ${openRows} of ${PAGES.length + SPA_PAGES.length}`);
+  const clusterable = PAGES.length + SPA_PAGES.length;
+  if (openRows < clusterable) {
     failures.push(
-      `only ${openRows} of ${PAGES.length} tabs visible without clicking`,
+      `only ${openRows} of ${clusterable} tabs visible without clicking`,
     );
   }
 

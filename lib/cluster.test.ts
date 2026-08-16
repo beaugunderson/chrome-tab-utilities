@@ -431,8 +431,8 @@ describe("defaultThreshold", () => {
     const sizes = cutTreeInconsistent(merges, n, threshold, maxScores).map(
       (c) => c.leaves.length,
     );
-    // Cap is max(10% of 10, 6) = 6.
-    expect(Math.max(...sizes)).toBeLessThanOrEqual(6);
+    // Cap is max(10% of 10, 4) = 4.
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(4);
   });
 
   it("is the coarsest such threshold, not merely a safe one", () => {
@@ -443,7 +443,7 @@ describe("defaultThreshold", () => {
       const sizes = cutTreeInconsistent(merges, n, higher, maxScores).map(
         (c) => c.leaves.length,
       );
-      expect(Math.max(...sizes)).toBeGreaterThan(6);
+      expect(Math.max(...sizes)).toBeGreaterThan(4);
     }
     expect(chosen).toBeLessThan(n);
   });

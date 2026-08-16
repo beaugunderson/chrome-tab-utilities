@@ -22,7 +22,12 @@ import {
   subCutThreshold,
 } from "../../lib/cluster";
 import { embedAll, loadEmbedder } from "../../lib/embed";
-import { type PageMeta, featureFingerprint, featureText } from "../../lib/features";
+import {
+  type PageMeta,
+  featureFingerprint,
+  featureText,
+  hasMetaContent,
+} from "../../lib/features";
 import { type LabelSource, labelClusters } from "../../lib/label";
 import {
   type TabRecord,
@@ -255,6 +260,9 @@ async function harvestTabs(
   let empty = 0;
 
   const started = performance.now();
+  // Say something before the first tab finishes, or the click looks inert.
+  setProgress(`Reading unloaded tabs… 0/${targets.length}`, 0, "Loading each one, reading it, then discarding it again.");
+  el("progress").scrollIntoView({ block: "center" });
 
   await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
     const caught = await reloadAndCapture(tab.id, tab.url);
@@ -265,11 +273,11 @@ async function harvestTabs(
     const record: TabRecord = {
       ...(records.get(url) ?? {}),
       metaTried: now,
-      ...(caught?.meta ? { meta: caught.meta } : {}),
+      ...(hasMetaContent(caught?.meta) ? { meta: caught!.meta } : {}),
     };
     records.set(url, record);
     updates.set(url, record);
-    if (!caught?.meta) empty++;
+    if (!hasMetaContent(caught?.meta)) empty++;
     done++;
     const rate = done / ((performance.now() - started) / 1000);
     const left = Math.round((targets.length - done) / Math.max(rate, 0.01));
@@ -350,7 +358,6 @@ function reloadAndCapture(
       if (settled) return;
       settled = true;
       awaitingMeta.delete(current);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onReplaced.removeListener(onReplaced);
       clearTimeout(timer);
       // Back to sleep immediately; this is also what aborts the rest of the
@@ -363,11 +370,11 @@ function reloadAndCapture(
 
     const capture = (result: { url: string; meta: PageMeta }) => finish(result);
 
-    // Fallback for pages that report nothing worth sending: the load finishing
-    // is the signal that there was nothing coming.
-    const onUpdated = (id: number, info: chrome.tabs.OnUpdatedInfo) => {
-      if (id === current && info.status === "complete") finish(null);
-    };
+    // Deliberately no listener for `status: "complete"`. A JS app often
+    // reports complete before it has rendered anything, and discarding at that
+    // point captured nothing — not even the title, which the app sets later.
+    // The content script decides when it has looked long enough and says so;
+    // the timeout below covers pages whose script never runs at all.
     const onReplaced = (added: number, removed: number) => {
       if (removed !== current) return;
       awaitingMeta.delete(current);
@@ -378,7 +385,6 @@ function reloadAndCapture(
     const timer = setTimeout(() => finish(null), HARVEST_LOAD_TIMEOUT_MS);
 
     awaitingMeta.set(current, capture);
-    chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onReplaced.addListener(onReplaced);
     // Navigate to the URL rather than reload(). Reloading a page that arrived
     // via POST re-submits the form, which puts up Chrome's "Confirm Form

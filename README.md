@@ -38,6 +38,7 @@ Everything starts expanded, including sub-clusters and clusters that only appear
 - Page metadata is captured just before a tab is auto-discarded, and pulled from every loaded tab when the triage page opens. The stats line shows what share of tabs have it. If tabs were already discarded before this shipped, the page offers a one-off pass that loads each of them once, reads it, and discards it again — stated up front with the count, never automatic.
 - **Near-duplicates** are found by cosine similarity rather than URL, which catches the same story on three different sites — something the URL-based duplicate closer structurally cannot.
 - Per-cluster actions: close all, keep the 3 most recent, apply as a Chrome tab group, move to a new window, tag all.
+- Closing tabs never re-clusters. Closed tabs drop out and everything else stays exactly where it was, so working down the page doesn't move the ground under you. "Rescan" is the deliberate way to recluster, and it holds your granularity across the rebuild.
 - **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.
 - Pinned, blank, and new-tab pages are excluded. Nothing is written to a real tab until you press an action.
 

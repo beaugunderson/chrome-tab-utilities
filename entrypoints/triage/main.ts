@@ -98,6 +98,13 @@ interface State {
    */
   collapsed: Set<number>;
   selected: Set<number>;
+  /**
+   * Leaf indices whose tab is gone. Closing a tab drops it from the view
+   * instead of re-clustering: rebuilding the dendrogram over the remaining
+   * tabs would renumber every node, rescale the slider and reshuffle the
+   * groups underneath whoever just closed something.
+   */
+  removed: Set<number>;
   dupeGroups: number[][];
   records: Map<string, TabRecord>;
 }
@@ -311,6 +318,8 @@ async function mapWithConcurrency<T>(
 }
 
 async function run() {
+  // Hold the granularity across the rebuild, since the slider scale changes.
+  const previousThreshold = state ? currentThreshold() : null;
   setProgress("Reading tabs…", null);
   const raw = await collectTabs();
   if (raw.length < 2) {
@@ -423,6 +432,7 @@ async function run() {
     scale: sortedInconsistencies(maxScores),
     withMeta: tabs.filter((t) => records.get(t.url)?.meta).length,
     collapsed: new Set(),
+    removed: new Set(),
     selected: new Set(),
     dupeGroups: groupDuplicates(nearDuplicatePairs(inputs, NEAR_DUPLICATE_SIMILARITY)),
     records,
@@ -430,7 +440,7 @@ async function run() {
 
   hideProgress();
   el("granularity").hidden = false;
-  resetSliderToDefault();
+  parkSliderAt(previousThreshold ?? DEFAULT_INCONSISTENCY);
   render();
   offerBacklog(raw, records);
 }
@@ -529,13 +539,20 @@ function offerBacklog(tabs: chrome.tabs.Tab[], records: Map<string, TabRecord>) 
   };
 }
 
-/** Park the slider at the quantile closest to the default inconsistency. */
-function resetSliderToDefault() {
+/**
+ * Park the slider at the quantile closest to a given inconsistency.
+ *
+ * Restoring the *value* rather than the slider position is what keeps
+ * granularity stable across a rescan: the quantile scale is rebuilt from
+ * whatever tabs exist now, so position 400 means something different every
+ * time, while inconsistency 1.4 means the same thing at any tab count.
+ */
+function parkSliderAt(target: number) {
   if (!state || state.scale.length === 0) return;
   let best = 0;
   let bestGap = Infinity;
   for (let i = 0; i < state.scale.length; i++) {
-    const gap = Math.abs(state.scale[i] - DEFAULT_INCONSISTENCY);
+    const gap = Math.abs(state.scale[i] - target);
     if (gap < bestGap) {
       bestGap = gap;
       best = i;
@@ -559,12 +576,15 @@ function currentThreshold(): number {
   return state.scale[index];
 }
 
+/** Members of a cluster that are still open. */
 function tabsOf(leaves: number[]): TriageTab[] {
-  return leaves.map((i) => state!.tabs[i]);
+  return leaves
+    .filter((i) => !state!.removed.has(i))
+    .map((i) => state!.tabs[i]);
 }
 
 function labelSources(leaves: number[]): LabelSource[] {
-  return leaves.map((i) => {
+  return leaves.filter((i) => !state!.removed.has(i)).map((i) => {
     const tab = state!.tabs[i];
     const record = state!.records.get(tab.url);
     return {
@@ -590,8 +610,13 @@ function rank(clusters: CutCluster[], context: RenderContext) {
       cluster,
       label: labels[i],
       tabs: tabsOf(cluster.leaves),
-      dupes: cluster.leaves.filter((leaf) => context.dupeIndices.has(leaf)).length,
+      dupes: cluster.leaves.filter(
+        (leaf) => context.dupeIndices.has(leaf) && !state!.removed.has(leaf),
+      ).length,
     }))
+    // A cluster whose tabs have all been closed leaves the page rather than
+    // lingering as an empty header.
+    .filter((entry) => entry.tabs.length > 0)
     .sort((a, b) => closureScore(b.tabs, b.dupes) - closureScore(a.tabs, a.dupes));
 }
 
@@ -626,13 +651,36 @@ function render() {
   );
   const ranked = rank(clusters, context);
 
-  el("cut-readout").textContent = `${clusters.length} clusters`;
-  const metaShare = Math.round((state.withMeta / state.tabs.length) * 100);
+  // Counts follow what is still open, so they tick down as tabs are closed.
+  const live = state.tabs.length - state.removed.size;
+  const liveDupes = [...context.dupeIndices].filter(
+    (i) => !state!.removed.has(i),
+  ).length;
+  const liveWithMeta = state.tabs.filter(
+    (t, i) => !state!.removed.has(i) && state!.records.get(t.url)?.meta,
+  ).length;
+  const metaShare = live > 0 ? Math.round((liveWithMeta / live) * 100) : 0;
+  const closed = state.removed.size;
+
+  el("cut-readout").textContent = `${ranked.length} clusters`;
   el("stats").textContent =
-    `${state.tabs.length} tabs · ${clusters.length} clusters · ` +
-    `${context.dupeIndices.size} near-duplicates · ${metaShare}% with page metadata`;
+    `${live} tabs · ${ranked.length} clusters · ${liveDupes} near-duplicates · ` +
+    `${metaShare}% with page metadata` +
+    (closed > 0 ? ` · ${closed} closed this session` : "");
 
   const host = el("clusters");
+  if (ranked.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent =
+      closed > 0
+        ? `All ${closed} tabs closed. Rescan to start over.`
+        : "Nothing to triage.";
+    host.replaceChildren(empty);
+    renderDuplicates();
+    renderSelection();
+    return;
+  }
   host.replaceChildren(
     ...ranked.map((entry) =>
       renderCluster(entry.cluster, entry.label, entry.tabs, entry.dupes, 0, context),
@@ -954,10 +1002,29 @@ async function tagAll(tabs: TriageTab[]) {
 
 // ===== Actions =====
 
+/**
+ * Close tabs and drop them from the view, leaving the dendrogram untouched.
+ *
+ * Re-clustering here would rebuild the tree over a different tab set, which
+ * renumbers every node, rebuilds the slider's quantile scale and reshuffles
+ * the groups — so every close silently changed the granularity. Use Rescan for
+ * a fresh clustering.
+ */
 async function closeAndRefresh(ids: number[]) {
-  if (ids.length === 0) return;
+  if (ids.length === 0 || !state) return;
   await removeTabs(ids);
-  await run();
+  forgetTabs(ids);
+  render();
+}
+
+/** Drop tabs from the view, whether we closed them or Chrome did. */
+function forgetTabs(ids: number[]) {
+  if (!state) return;
+  const doomed = new Set(ids);
+  for (let i = 0; i < state.tabs.length; i++) {
+    if (doomed.has(state.tabs[i].id)) state.removed.add(i);
+  }
+  for (const id of ids) state.selected.delete(id);
 }
 
 async function applyAsGroup(tabs: TriageTab[], label: string) {
@@ -1008,7 +1075,12 @@ function hashString(text: string): number {
 
 function renderDuplicates() {
   const host = el("dupes");
-  if (!state || state.dupeGroups.length === 0) {
+  // A set stops being a duplicate set once all but one of it has been closed.
+  const groups = (state?.dupeGroups ?? [])
+    .map((group) => group.filter((i) => !state!.removed.has(i)))
+    .filter((group) => group.length > 1);
+
+  if (!state || groups.length === 0) {
     host.hidden = true;
     return;
   }
@@ -1016,8 +1088,8 @@ function renderDuplicates() {
   host.replaceChildren();
 
   const heading = document.createElement("h2");
-  const total = state.dupeGroups.reduce((sum, g) => sum + g.length - 1, 0);
-  heading.textContent = `${total} near-duplicate tabs in ${state.dupeGroups.length} sets`;
+  const total = groups.reduce((sum, g) => sum + g.length - 1, 0);
+  heading.textContent = `${total} near-duplicate tabs in ${groups.length} sets`;
 
   const note = document.createElement("p");
   note.className = "note";
@@ -1029,7 +1101,7 @@ function renderDuplicates() {
   keepAll.textContent = "Keep newest of each";
   keepAll.addEventListener("click", () => {
     const doomed: number[] = [];
-    for (const group of state!.dupeGroups) {
+    for (const group of groups) {
       const sorted = group
         .map((i) => state!.tabs[i])
         .sort((a, b) => a.idleMs - b.idleMs);
@@ -1039,7 +1111,7 @@ function renderDuplicates() {
   });
 
   host.append(heading, note, keepAll);
-  for (const group of state.dupeGroups) {
+  for (const group of groups) {
     const box = document.createElement("div");
     box.className = "dupe-group";
     for (const index of group) box.append(renderTab(state.tabs[index]));
@@ -1099,6 +1171,14 @@ el("fold-all").addEventListener("click", () => {
   if (state.collapsed.size > 0) state.collapsed.clear();
   else for (const node of visibleClusterNodes()) state.collapsed.add(node);
   render();
+});
+
+// Tabs closed from the tab strip while this page is open drop out of the view
+// the same way, so it never offers to close something that is already gone.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (!state) return;
+  forgetTabs([tabId]);
+  scheduleRender();
 });
 
 el("cut").addEventListener("input", scheduleRender);

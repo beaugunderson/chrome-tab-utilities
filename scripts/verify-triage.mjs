@@ -382,6 +382,59 @@ try {
     failures.push(`Expand all restored ${reopened}, expected ${openRows}`);
   }
 
+  // Closing a tab must not re-cluster. Rebuilding the tree over the remaining
+  // tabs rescales the slider and reshuffles the groups, so every close used to
+  // silently change the granularity underneath you.
+  await setCut(650);
+  const beforeClose = {
+    position: await triage.inputValue("#cut"),
+    readout: await triage.textContent("#cut-readout"),
+    groups: await clusterMemberships(),
+  };
+
+  await triage.click("main .cluster-body .tab-row .tab-close");
+  await triage.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+
+  const afterClose = {
+    position: await triage.inputValue("#cut"),
+    readout: await triage.textContent("#cut-readout"),
+    groups: await clusterMemberships(),
+  };
+
+  console.log(
+    `closing one tab: slider ${beforeClose.position} → ${afterClose.position}, ` +
+      `${beforeClose.readout} → ${afterClose.readout}`,
+  );
+  if (beforeClose.position !== afterClose.position) {
+    failures.push(
+      `closing a tab moved the slider from ${beforeClose.position} to ${afterClose.position}`,
+    );
+  }
+  if (beforeClose.groups.length !== afterClose.groups.length) {
+    failures.push(
+      `closing a tab changed the cluster count from ${beforeClose.groups.length} to ${afterClose.groups.length}`,
+    );
+  }
+  // Exactly one tab should have vanished, and no tab should have moved between
+  // clusters.
+  const flatBefore = beforeClose.groups.flat();
+  const flatAfter = afterClose.groups.flat();
+  if (flatBefore.length - flatAfter.length !== 1) {
+    failures.push(
+      `closing one tab removed ${flatBefore.length - flatAfter.length} rows`,
+    );
+  }
+  for (let i = 0; i < afterClose.groups.length; i++) {
+    const strays = afterClose.groups[i].filter(
+      (t) => !beforeClose.groups[i]?.includes(t),
+    );
+    if (strays.length > 0) {
+      failures.push(`closing a tab reshuffled cluster ${i}: ${strays.join("; ")}`);
+    }
+  }
+
   // Collapsing one cluster must hide only that cluster's tabs.
   await triage.click("main > .cluster .chevron");
   const afterOne = await visibleTabs();

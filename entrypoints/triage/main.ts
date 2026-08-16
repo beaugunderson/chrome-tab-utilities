@@ -64,6 +64,15 @@ const HARVEST_LOAD_TIMEOUT_MS = 20000;
 // been down or behind a login rather than genuinely empty.
 const HARVEST_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
+interface CapturedPage {
+  url: string;
+  title?: string;
+  meta: PageMeta;
+  /** Meta tag names present, sent only when nothing useful was found. */
+  metaNames?: string[];
+  readyState?: string;
+}
+
 interface HarvestOutcome {
   read: number;
   titleOnly: number;
@@ -309,6 +318,8 @@ async function harvestTabs(
       metaOutcome: outcome,
       ...(caught?.title ? { lastTitleSeen: caught.title.slice(0, 120) } : {}),
       ...(landedElsewhere ? { redirectedTo: caught!.url.slice(0, 200) } : {}),
+      ...(caught?.metaNames ? { metaNamesSeen: caught.metaNames } : {}),
+      ...(caught?.readyState ? { readyStateSeen: caught.readyState } : {}),
       ...(gotMeta ? { meta: caught!.meta } : {}),
       ...(gotTitle ? { title: caught!.title } : {}),
     };
@@ -370,7 +381,7 @@ function formatDuration(seconds: number): string {
  */
 const awaitingMeta = new Map<
   number,
-  (result: { url: string; title?: string; meta: PageMeta }) => void
+  (result: CapturedPage) => void
 >();
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
@@ -379,6 +390,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     url: msg.url,
     title: msg.title,
     meta: msg.meta,
+    metaNames: msg.metaNames,
+    readyState: msg.readyState,
   });
 });
 
@@ -397,12 +410,12 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 function reloadAndCapture(
   tabId: number,
   url: string,
-): Promise<{ url: string; title?: string; meta: PageMeta } | null> {
+): Promise<CapturedPage | null> {
   return new Promise((resolve) => {
     let current = tabId;
     let settled = false;
 
-    const finish = (result: { url: string; title?: string; meta: PageMeta } | null) => {
+    const finish = (result: CapturedPage | null) => {
       if (settled) return;
       settled = true;
       awaitingMeta.delete(current);
@@ -416,8 +429,7 @@ function reloadAndCapture(
       resolve(result);
     };
 
-    const capture = (result: { url: string; title?: string; meta: PageMeta }) =>
-      finish(result);
+    const capture = (result: CapturedPage) => finish(result);
 
     // Deliberately no listener for `status: "complete"`. A JS app often
     // reports complete before it has rendered anything, and discarding at that
@@ -1627,6 +1639,9 @@ function exportSnapshot() {
           reportedTitle: record?.lastTitleSeen,
           redirectedTo: record?.redirectedTo,
           meta: record?.meta,
+          metaNamesSeen: record?.metaNamesSeen,
+          readyStateSeen: record?.readyStateSeen,
+          triedAt: record?.metaTried,
         };
       }),
     nearDuplicates: state.dupeGroups.map((group) =>

@@ -46,6 +46,10 @@ export interface TabRecord {
   lastTitleSeen?: string;
   /** Where the page ended up, when that was not the tab's own URL. */
   redirectedTo?: string;
+  /** Meta tag names present when a page reported nothing useful. Diagnostic. */
+  metaNamesSeen?: string[];
+  /** document.readyState at the moment a page reported. Diagnostic. */
+  readyStateSeen?: string;
   tags?: string[];
   /** URL of the tab this one was opened from. */
   opener?: string;

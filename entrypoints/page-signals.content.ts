@@ -62,6 +62,23 @@ function visibleHeading(): string | undefined {
   return undefined;
 }
 
+/**
+ * Names of every meta tag in the document, values omitted.
+ *
+ * Sent only when a page yielded nothing, to answer what it does expose. Two
+ * rounds were spent guessing which tag to read on pages that turned out to
+ * have none of the ones being tried; asking the page is cheaper than another
+ * guess.
+ */
+function metaTagNames(): string[] {
+  const names = new Set<string>();
+  for (const el of document.querySelectorAll("meta")) {
+    const key = el.getAttribute("property") ?? el.getAttribute("name");
+    if (key) names.add(key);
+  }
+  return [...names].slice(0, 40);
+}
+
 function harvest(): PageMeta {
   const heading = visibleHeading();
   const siteName = attr('meta[property="og:site_name"]');
@@ -146,6 +163,10 @@ export default defineContentScript({
           title: document.title,
           meta,
           final,
+          // Only when there was nothing to report, so the next question is
+          // answered by the page rather than by another guess.
+          metaNames: hasMetaContent(meta) ? undefined : metaTagNames(),
+          readyState: document.readyState,
         })
         .catch(() => {});
     };

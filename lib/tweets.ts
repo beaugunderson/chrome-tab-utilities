@@ -66,3 +66,20 @@ export async function fetchTweet(id: string): Promise<Tweet | null> {
     return null;
   }
 }
+
+/**
+ * Whether loading this page again could tell us anything new.
+ *
+ * The question is what can be done now, not what failed before. A post is
+ * readable over the network however many times loading its page came back
+ * empty, and gating on the earlier failure hid 60 of 64 tabs from the reader
+ * built for exactly them. A page that genuinely carries no title or
+ * description will not grow one, so it is not offered again.
+ */
+export function isWorthReading(
+  url: string,
+  outcome: "text" | "title" | "empty" | "timeout" | undefined,
+): boolean {
+  if (tweetIdFromUrl(url)) return true;
+  return outcome === undefined || outcome === "timeout";
+}

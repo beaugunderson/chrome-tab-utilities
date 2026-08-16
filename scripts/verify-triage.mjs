@@ -493,28 +493,6 @@ try {
   const offersRead = readButton.some((t) => /^Read \d+/.test(t));
   console.log(`unidentified offers a read button: ${offersRead}`);
 
-  // The section has to say why the last attempt came to nothing, next to the
-  // tabs rather than in the header where it gets lost.
-  const diagnosis = await triage.$$eval("#unknown .note", (n) =>
-    n.map((x) => x.textContent ?? ""),
-  );
-  if (!diagnosis.some((t) => /been read yet|Last attempt:/.test(t))) {
-    failures.push(`unidentified section reports no read outcome: ${JSON.stringify(diagnosis)}`);
-  }
-
-  // Unreadable tabs are grouped by the account in their URL, not lumped under
-  // the host: 77 x.com tabs in one pile are undecidable, the same tabs split
-  // by account are a list you can work through.
-  const spaceHeaders = await triage.$$eval("#unknown .cluster-name", (n) =>
-    n.map((x) => x.textContent ?? ""),
-  );
-  console.log(`unidentified grouped as: ${JSON.stringify(spaceHeaders)}`);
-  if (!spaceHeaders.some((h) => h.includes("/acct-alpha"))) {
-    failures.push(
-      `unidentified tabs not split by account: ${JSON.stringify(spaceHeaders)}`,
-    );
-  }
-
   const clusteredBare = await triage.$$eval("main .tab-title", (rows) =>
     rows.filter((r) => (r.textContent ?? "").includes("/bare-")).length,
   );

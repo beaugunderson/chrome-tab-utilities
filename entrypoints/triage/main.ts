@@ -39,7 +39,7 @@ import {
   saveRecords,
 } from "../../lib/store";
 import { removeTabs } from "../../lib/tabs";
-import { fetchTweet, tweetIdFromUrl } from "../../lib/tweets";
+import { fetchTweet, isWorthReading, tweetIdFromUrl } from "../../lib/tweets";
 import { domainKey, hostOf } from "../../lib/url";
 
 const NEAR_DUPLICATE_SIMILARITY = 0.95;
@@ -445,6 +445,9 @@ function harvestTargets(
     // Same standard as everywhere else: a stored site name is not content, and
     // must not make a tab permanently ineligible.
     if (hasMetaContent(record?.meta)) return false;
+    // Posts are read over the network, so a failed page load says nothing
+    // about whether they can be read now.
+    if (tweetIdFromUrl(t.url)) return true;
     // Retried eventually, since a page can be empty because it failed to load.
     return (record?.metaTried ?? 0) < staleBefore;
   });
@@ -1481,17 +1484,25 @@ function renderUnidentified() {
     "by the account or section in their URL, which is the one real thing the " +
     "address does carry.";
 
-  // Only tabs that might still yield something. A page already read and found
-  // to have no title or description tags at all will not acquire them, and
-  // offering to load it again promises something that cannot happen.
-  const worthReading = live.filter((t) => {
-    const record = state!.records.get(t.url);
-    return !record?.metaOutcome || record.metaOutcome === "timeout";
-  });
+  // What is worth reading depends on what can be done now, not on what failed
+  // before. A post is readable over the network however many times loading its
+  // page came back empty, and gating on the old failure meant a new capability
+  // was never offered the tabs it was built for.
+  const worthReading = live.filter((t) =>
+    isWorthReading(t.url, state!.records.get(t.url)?.metaOutcome),
+  );
+  const postCount = worthReading.filter((t) => tweetIdFromUrl(t.url)).length;
+  const loadCount = worthReading.length - postCount;
 
   const readAll = document.createElement("button");
   readAll.className = "ghost";
-  readAll.textContent = `Read ${worthReading.length} — one page load each`;
+  readAll.textContent =
+    `Read ${worthReading.length}` +
+    (postCount > 0 && loadCount > 0
+      ? ` — ${postCount} posts fetched, ${loadCount} page loads`
+      : postCount > 0
+        ? " posts — no page loads"
+        : " — one page load each");
   readAll.hidden = worthReading.length === 0;
   readAll.addEventListener("click", async () => {
     readAll.disabled = true;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tweetHandleFromUrl, tweetIdFromUrl } from "./tweets";
+import { isWorthReading, tweetHandleFromUrl, tweetIdFromUrl } from "./tweets";
 
 describe("tweetIdFromUrl", () => {
   it("reads the id from a status URL", () => {
@@ -44,5 +44,31 @@ describe("tweetHandleFromUrl", () => {
 
   it("returns null off-site", () => {
     expect(tweetHandleFromUrl("https://github.com/o/r")).toBeNull();
+  });
+});
+
+describe("isWorthReading", () => {
+  const post = "https://x.com/simonw/status/2073117641020215566";
+  const page = "https://dreamsongs.com/Files/whatever.html";
+
+  it("offers a post even after a page load came back empty", () => {
+    // The regression: 60 of 64 tabs were hidden from the reader built for them
+    // because an older, different method had already failed on them.
+    expect(isWorthReading(post, "empty")).toBe(true);
+    expect(isWorthReading(post, "timeout")).toBe(true);
+  });
+
+  it("does not re-offer an ordinary page proven to have nothing", () => {
+    expect(isWorthReading(page, "empty")).toBe(false);
+  });
+
+  it("offers anything never tried, or that timed out", () => {
+    expect(isWorthReading(page, undefined)).toBe(true);
+    expect(isWorthReading(page, "timeout")).toBe(true);
+  });
+
+  it("does not re-offer what already worked", () => {
+    expect(isWorthReading(page, "text")).toBe(false);
+    expect(isWorthReading(page, "title")).toBe(false);
   });
 });

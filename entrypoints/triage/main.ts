@@ -236,7 +236,17 @@ async function harvestDiscarded(
   tabs: chrome.tabs.Tab[],
   records: Map<string, TabRecord>,
 ): Promise<{ read: number; empty: number }> {
-  const targets = harvestTargets(tabs, records);
+  return harvestTabs(
+    harvestTargets(tabs, records).map((t) => ({ id: t.id!, url: t.url! })),
+    records,
+  );
+}
+
+/** Load, read and re-discard an explicit list of tabs. */
+async function harvestTabs(
+  targets: Array<{ id: number; url: string }>,
+  records: Map<string, TabRecord>,
+): Promise<{ read: number; empty: number }> {
   if (targets.length === 0) return { read: 0, empty: 0 };
 
   const updates = new Map<string, TabRecord>();
@@ -247,11 +257,11 @@ async function harvestDiscarded(
   const started = performance.now();
 
   await mapWithConcurrency(targets, HARVEST_CONCURRENCY, async (tab) => {
-    const caught = await reloadAndCapture(tab.id!, tab.url!);
+    const caught = await reloadAndCapture(tab.id, tab.url);
     // The attempt is recorded whether or not anything came back. Plenty of
     // pages carry no description, og tags or h1 at all, and without this they
     // would be reloaded again on every future pass forever.
-    const url = caught?.url ?? tab.url!;
+    const url = caught?.url ?? tab.url;
     const record: TabRecord = {
       ...(records.get(url) ?? {}),
       metaTried: now,
@@ -285,7 +295,10 @@ function harvestTargets(
 ): chrome.tabs.Tab[] {
   const staleBefore = Date.now() - HARVEST_RETRY_AFTER_MS;
   return tabs.filter((t) => {
-    if (!t.discarded || !t.url?.startsWith("http")) return false;
+    // Unloaded covers more than discarded: a tab restored from a session but
+    // never opened has no content script either, and is not marked discarded.
+    const unloaded = t.discarded || t.status === "unloaded";
+    if (!unloaded || !t.url?.startsWith("http")) return false;
     const record = records.get(t.url);
     if (record?.meta) return false;
     // Retried eventually, since a page can be empty because it failed to load.
@@ -1316,9 +1329,29 @@ function renderUnidentified() {
     "Never loaded, so Chrome has no title for them, and never read, so there " +
     "is no page text either. Clustering them by meaning would be guesswork — " +
     "every item on a site looks the same through a URL — so they are grouped " +
-    "by site instead. Reading them makes them cluster properly.";
+    "by site instead.";
 
-  host.append(heading, note);
+  // The section says reading them fixes it, so it has to offer to do that.
+  // These are not the same set as the discarded-tab backlog: a tab restored
+  // from a session but never opened is unloaded without being discarded.
+  const readAll = document.createElement("button");
+  readAll.className = "ghost";
+  readAll.textContent = `Read all ${live.length} — one page load each`;
+  readAll.addEventListener("click", async () => {
+    readAll.disabled = true;
+    const { read, empty } = await harvestTabs(
+      live.map((t) => ({ id: t.id, url: t.url })),
+      state!.records,
+    );
+    lastHarvest =
+      empty > 0
+        ? `Read ${read} tabs; ${empty} had nothing to read.`
+        : `Read ${read} tabs.`;
+    setProgress(`${lastHarvest} Re-clustering…`, null);
+    await run();
+  });
+
+  host.append(heading, note, readAll);
 
   const byHost = new Map<string, TriageTab[]>();
   for (const tab of live) {

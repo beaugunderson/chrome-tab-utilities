@@ -324,6 +324,16 @@ try {
       `expected ${BARE_PAGES.length} unidentified tabs, found ${unknownRows}`,
     );
   }
+  // The section tells you reading them fixes the grouping, so it has to offer
+  // a way to do that.
+  const readButton = await triage.$$eval("#unknown button", (b) =>
+    b.map((x) => x.textContent ?? ""),
+  );
+  console.log(`unidentified actions: ${JSON.stringify(readButton)}`);
+  if (!readButton.some((t) => t.includes("Read all"))) {
+    failures.push("unidentified section says to read them but offers no button");
+  }
+
   const clusteredBare = await triage.$$eval("main .tab-title", (rows) =>
     rows.filter((r) => (r.textContent ?? "").includes("/bare-")).length,
   );

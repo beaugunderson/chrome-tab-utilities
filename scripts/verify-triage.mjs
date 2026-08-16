@@ -152,6 +152,15 @@ try {
     failures.push("no ORT runtime files were fetched; wasmPaths may be ignored");
   }
 
+  const defaultPosition = await triage.inputValue("#cut");
+  const defaultClusters = await triage.$$eval(
+    "main > .cluster, main > .tab-row",
+    (r) => r.length,
+  );
+  console.log(
+    `slider opens at ${defaultPosition}/1000 → ${defaultClusters} clusters`,
+  );
+
   const dupeVisible = await triage.isVisible("#dupes");
   console.log(`near-duplicate panel shown: ${dupeVisible}`);
   if (!dupeVisible) {
@@ -207,6 +216,86 @@ try {
       break;
     }
   }
+
+  // Quality, not just plumbing: the fixtures are four obvious topics, so at
+  // some slider position each should sit whole in one cluster. Membership is
+  // read off the rendered rows by title.
+  const TOPICS = {
+    "pull requests": ["pr-1", "pr-2", "pr-3", "pr-4"],
+    ceasefire: ["news-1", "news-2", "news-3"],
+    // The mortgage calculator belongs here: it is the same task as looking at
+    // listings, which is exactly the kind of link a domain-based grouping
+    // misses and this one should not.
+    "house hunting": ["house-1", "house-2", "house-3"],
+    "ml reading": ["ml-1", "ml-2"],
+  };
+  const titleOf = new Map(PAGES.map(([slug, title]) => [slug, title]));
+
+  const clusterMemberships = () =>
+    triage.$$eval("main > .cluster", (sections) =>
+      sections.map((s) =>
+        [...s.querySelectorAll(".tab-row .tab-title")].map(
+          (t) => t.textContent ?? "",
+        ),
+      ),
+    );
+
+  const topicResults = {};
+  for (const [name, slugs] of Object.entries(TOPICS)) {
+    const wanted = slugs.map((s) => titleOf.get(s));
+    let bestPosition = null;
+    for (const position of [200, 350, 500, 650, 800, 950]) {
+      await setCut(position);
+      const groups = await clusterMemberships();
+      const whole = groups.some((titles) =>
+        wanted.every((w) => titles.includes(w)),
+      );
+      if (whole) {
+        bestPosition = position;
+        break;
+      }
+    }
+    topicResults[name] = bestPosition;
+  }
+
+  console.log("\ntopic recovered whole at slider position:");
+  for (const [name, position] of Object.entries(topicResults)) {
+    console.log(`  ${name}: ${position ?? "never"}`);
+    if (position === null) {
+      failures.push(`"${name}" never grouped into a single cluster`);
+    }
+  }
+
+  // The stronger claim, and the one tuning tends to break: the view you get
+  // without touching the slider should already be right. Every topic whole,
+  // and none of them fused with another.
+  await triage.reload();
+  await triage.waitForSelector("#granularity:not([hidden])", { timeout: 120000 });
+  const openingGroups = await clusterMemberships();
+  let clean = 0;
+  for (const [name, slugs] of Object.entries(TOPICS)) {
+    const wanted = slugs.map((s) => titleOf.get(s));
+    const holder = openingGroups.find((titles) =>
+      wanted.every((w) => titles.includes(w)),
+    );
+    if (!holder) {
+      failures.push(`"${name}" is not whole at the default cut`);
+      continue;
+    }
+    const strays = holder.filter((t) => !wanted.includes(t));
+    if (strays.length > 0) {
+      failures.push(
+        `"${name}" is fused at the default cut with: ${strays.join("; ")}`,
+      );
+      continue;
+    }
+    clean++;
+  }
+  const topicCount = Object.keys(TOPICS).length;
+  console.log(
+    `default cut: ${clean}/${topicCount} topics whole and unfused ` +
+      `across ${openingGroups.length} multi-tab clusters`,
+  );
 
   // Clusters start expanded, so every tab must be on screen with no clicking.
   // Counted inside clusters plus top-level singletons; the duplicates panel

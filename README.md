@@ -27,12 +27,15 @@ A separate page ("Triage tabs by topic" in the popup, or the `triage-tabs` comma
 
 Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata, URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
 
-The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag; it is the same tree cut at a different height. A cluster shows its own sub-clusters, so a broad "news" cluster opens into per-story groups.
+The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag. A cluster shows its own sub-clusters, so a broad "news" cluster opens into per-story groups.
+
+The slice is by *inconsistency* rather than by a fixed distance: a merge counts as a real boundary when it stands well above the merges beneath it, whatever its absolute size. This matters because a tight topic and a sprawling one join up at completely different distances, so any single distance threshold either shreds the sprawling topic or fuses the tight ones into it.
 
 Everything starts expanded, including sub-clusters and clusters that only appear as you move the slider. "Collapse all" folds the lot; individual collapses stick.
 
 - Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
-- Cluster names come from c-TF-IDF over the member titles: words frequent inside the cluster and rare across the others. No model call, so names update instantly with the slider.
+- Cluster names come from c-TF-IDF over the member titles: words and short phrases frequent inside the cluster and rare across the others, in their original casing. No model call, so names update instantly with the slider.
+- Page metadata is pulled from every loaded tab when the page opens, not only when a tab is navigated, so tabs that have been sitting open for months still contribute more than their title. The stats line shows what share of tabs have it.
 - **Near-duplicates** are found by cosine similarity rather than URL, which catches the same story on three different sites — something the URL-based duplicate closer structurally cannot.
 - Per-cluster actions: close all, keep the 3 most recent, apply as a Chrome tab group, move to a new window, tag all.
 - **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.

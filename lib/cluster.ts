@@ -308,6 +308,123 @@ export function sortedHeights(merges: Merge[]): number[] {
 }
 
 /**
+ * How many levels below a merge feed its inconsistency score.
+ *
+ * Deeper than scipy's default of 2, measured rather than assumed: at depth 2 a
+ * merge joining an internally loose topic to an unrelated one did not stand
+ * out, because its own children were already tall. Widening the window one
+ * level made that boundary visible and split four pull-request tabs back out
+ * of a news cluster.
+ */
+const INCONSISTENCY_DEPTH = 3;
+
+/**
+ * Inconsistency coefficient per merge: how far a merge's height sits above the
+ * merges just beneath it, measured in their own standard deviations.
+ *
+ * This is what a single absolute height threshold cannot do. Tabs about one
+ * tight topic merge at small distances and tabs about a broad one merge at
+ * large distances, so any one global cut shreds the broad topic or fuses the
+ * tight ones. A merge that towers over its own children is a real boundary
+ * whatever its absolute height, and a merge that continues at roughly the
+ * height below it is not.
+ *
+ * Zero where there is too little beneath a merge to say, which keeps small
+ * subtrees together rather than splitting them on noise.
+ */
+export function inconsistencies(merges: Merge[], n: number): Float64Array {
+  const out = new Float64Array(merges.length);
+
+  for (let i = 0; i < merges.length; i++) {
+    const heights: number[] = [];
+    const stack: Array<[number, number]> = [[n + i, 1]];
+    while (stack.length > 0) {
+      const [node, level] = stack.pop()!;
+      if (node < n || level > INCONSISTENCY_DEPTH) continue;
+      const merge = merges[node - n];
+      heights.push(merge.distance);
+      stack.push([merge.a, level + 1], [merge.b, level + 1]);
+    }
+
+    if (heights.length < 2) continue;
+    let sum = 0;
+    for (const h of heights) sum += h;
+    const mean = sum / heights.length;
+    let variance = 0;
+    for (const h of heights) variance += (h - mean) * (h - mean);
+    const deviation = Math.sqrt(variance / heights.length);
+    if (deviation === 0) continue;
+    out[i] = (merges[i].distance - mean) / deviation;
+  }
+
+  return out;
+}
+
+/**
+ * The largest inconsistency anywhere in each node's subtree, indexed by node
+ * id. A subtree is only emitted as one cluster when every merge inside it is
+ * consistent, matching scipy's `fcluster(criterion="inconsistent")`.
+ */
+export function maxInconsistencies(
+  merges: Merge[],
+  n: number,
+  scores: Float64Array,
+): Float64Array {
+  const out = new Float64Array(n + merges.length);
+  // Merges are emitted children-before-parents, so one forward pass suffices.
+  for (let i = 0; i < merges.length; i++) {
+    const { a, b } = merges[i];
+    out[n + i] = Math.max(scores[i], out[a], out[b]);
+  }
+  return out;
+}
+
+/**
+ * Slice the dendrogram wherever the structure says to, rather than at one
+ * fixed height. `threshold` is an inconsistency value, not a distance.
+ */
+export function cutTreeInconsistent(
+  merges: Merge[],
+  n: number,
+  threshold: number,
+  maxScores: Float64Array,
+  precomputed?: number[][],
+): CutCluster[] {
+  if (n === 0) return [];
+  if (merges.length === 0) return [{ node: 0, leaves: [0], height: 0 }];
+
+  const members = precomputed ?? collectMembers(merges, n);
+  const out: CutCluster[] = [];
+  const stack = [n + merges.length - 1];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node < n) {
+      out.push({ node, leaves: members[node], height: 0 });
+      continue;
+    }
+    if (maxScores[node] <= threshold) {
+      out.push({ node, leaves: members[node], height: merges[node - n].distance });
+      continue;
+    }
+    const { a, b } = merges[node - n];
+    stack.push(a, b);
+  }
+
+  return out.sort((x, y) => y.leaves.length - x.leaves.length);
+}
+
+/**
+ * Distinct subtree-max inconsistency values, ascending, for the slider to
+ * index into. Same reason as sortedHeights: quantiles keep every slider
+ * position meaningful.
+ */
+export function sortedInconsistencies(maxScores: Float64Array): number[] {
+  const unique = [...new Set(Array.from(maxScores))].sort((a, b) => a - b);
+  return unique;
+}
+
+/**
  * Index pairs whose cosine similarity is at or above `threshold`. Deliberately
  * reads raw embeddings rather than the matrix from distanceMatrix(), since the
  * structural factors there would report same-domain tabs as duplicates of each

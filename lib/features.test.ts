@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { featureFingerprint, featureText, pathTokens } from "./features";
+import { cleanTitle, featureFingerprint, featureText, pathTokens } from "./features";
 
 describe("pathTokens", () => {
   it("splits a path into words and drops plumbing segments", () => {
@@ -134,5 +134,54 @@ describe("featureFingerprint", () => {
     expect(featureFingerprint(base)).not.toBe(
       featureFingerprint({ ...base, tags: ["work"] }),
     );
+  });
+});
+
+describe("cleanTitle", () => {
+  it("strips a leading unread count", () => {
+    expect(cleanTitle("(3) Ceasefire talks resume")).toBe("Ceasefire talks resume");
+    expect(cleanTitle("(1,204) Inbox")).toBe("Inbox");
+    expect(cleanTitle("[5] Build failed")).toBe("Build failed");
+  });
+
+  it("strips a trailing site name matching the host", () => {
+    expect(cleanTitle("Rust 2.0 announced | Hacker News", undefined, "news.ycombinator.com")).toBe(
+      "Rust 2.0 announced | Hacker News",
+    );
+    expect(cleanTitle("Some video - YouTube", undefined, "youtube.com")).toBe("Some video");
+    expect(cleanTitle("A story · GitHub", undefined, "github.com")).toBe("A story");
+  });
+
+  it("strips a trailing site name matching og:site_name", () => {
+    expect(cleanTitle("Talks resume — The Verge", "The Verge", "theverge.com")).toBe(
+      "Talks resume",
+    );
+  });
+
+  it("leaves a trailing phrase that is not the site", () => {
+    expect(cleanTitle("Pandas - a tutorial", undefined, "example.com")).toBe(
+      "Pandas - a tutorial",
+    );
+  });
+
+  it("never strips the title down to nothing", () => {
+    // A title that is only the site name keeps one copy rather than emptying.
+    expect(cleanTitle("YouTube - YouTube", undefined, "youtube.com")).toBe("YouTube");
+    expect(cleanTitle("Ars - Ars", undefined, "ars.example")).not.toBe("");
+    expect(cleanTitle("(3)", undefined, "example.com")).not.toBe("");
+  });
+
+  it("handles an empty or missing title", () => {
+    expect(cleanTitle(undefined)).toBe("");
+    expect(cleanTitle("   ")).toBe("");
+  });
+
+  it("feeds the cleaned title into featureText", () => {
+    const text = featureText({
+      title: "(7) Ceasefire talks resume - The Verge",
+      url: "https://www.theverge.com/2026/talks",
+      meta: { siteName: "The Verge" },
+    });
+    expect(text.split("\n")[0]).toBe("Ceasefire talks resume");
   });
 });

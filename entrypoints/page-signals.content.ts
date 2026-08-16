@@ -83,6 +83,13 @@ export default defineContentScript({
         sendResponse({ dirty });
         return false;
       }
+      // Lets the triage page pull metadata from tabs that were already open
+      // before this extension existed, instead of waiting for each to be
+      // navigated again.
+      if (msg && msg.type === "get-page-meta") {
+        sendResponse({ url: location.href, meta: harvest() });
+        return false;
+      }
     });
 
     const reportMeta = () => {

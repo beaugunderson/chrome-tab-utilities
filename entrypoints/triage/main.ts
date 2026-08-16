@@ -9,17 +9,19 @@ import {
   type ClusterInput,
   type Merge,
   collectMembers,
-  cutTree,
+  cutTreeInconsistent,
   distanceMatrix,
   dot,
+  inconsistencies,
   linkage,
+  maxInconsistencies,
   nearDuplicatePairs,
-  sortedHeights,
+  sortedInconsistencies,
   subCut,
   subCutThreshold,
 } from "../../lib/cluster";
 import { embedAll, loadEmbedder } from "../../lib/embed";
-import { featureFingerprint, featureText } from "../../lib/features";
+import { type PageMeta, featureFingerprint, featureText } from "../../lib/features";
 import { type LabelSource, labelClusters } from "../../lib/label";
 import {
   type TabRecord,
@@ -33,6 +35,13 @@ import { removeTabs } from "../../lib/tabs";
 import { domainKey, hostOf } from "../../lib/url";
 
 const NEAR_DUPLICATE_SIMILARITY = 0.95;
+/**
+ * Where the slider starts, as an inconsistency value rather than a fixed
+ * position. 1.15 is scipy's long-standing default for this criterion, and
+ * anchoring to the value rather than to a slider position means the opening
+ * view is the same kind of cut whether there are 40 tabs or 900.
+ */
+const DEFAULT_INCONSISTENCY = 1.15;
 const TAG_SUGGEST_SIMILARITY = 0.8;
 // Quantile of a subtree's own merge heights used when drilling into it.
 const SUB_CUT_QUANTILE = 0.6;
@@ -40,6 +49,8 @@ const SUB_CUT_QUANTILE = 0.6;
 const MIN_SUBCLUSTER_PARENT = 6;
 const KEEP_NEWEST_COUNT = 3;
 const MAX_GROUP_TITLE = 30;
+// Page-metadata requests in flight while backfilling.
+const META_CONCURRENCY = 16;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
   "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey",
@@ -70,7 +81,12 @@ interface TriageTab {
 interface State {
   tabs: TriageTab[];
   merges: Merge[];
-  heights: number[];
+  /** Largest inconsistency in each node's subtree; what the slider cuts on. */
+  maxScores: Float64Array;
+  /** Distinct subtree inconsistencies, ascending, for the slider to index. */
+  scale: number[];
+  /** How many tabs contributed harvested page metadata, for the stats line. */
+  withMeta: number;
   /**
    * Node ids the user has folded shut. Tracking collapses rather than
    * expansions means everything is open by default, including clusters that
@@ -139,6 +155,67 @@ async function collectTabs(): Promise<chrome.tabs.Tab[]> {
   );
 }
 
+/**
+ * Ask each loaded tab's content script for its page metadata directly.
+ *
+ * The content script only reports on page load, so every tab that was already
+ * open before the extension was installed has none cached, and on a large
+ * long-lived tab set that is nearly all of them — leaving titles and URL words
+ * as the only clustering signal. Discarded tabs have no content script and are
+ * skipped; they keep whatever was cached from when they were last loaded.
+ */
+async function backfillMeta(
+  tabs: chrome.tabs.Tab[],
+  records: Map<string, TabRecord>,
+): Promise<number> {
+  const missing = tabs.filter(
+    (t) => !t.discarded && t.status === "complete" && !records.get(t.url!)?.meta,
+  );
+  if (missing.length === 0) return 0;
+
+  setProgress("Reading page metadata…", 0, `${missing.length} tabs`);
+  const updates = new Map<string, TabRecord>();
+  let done = 0;
+
+  await mapWithConcurrency(missing, META_CONCURRENCY, async (tab) => {
+    try {
+      const response = (await chrome.tabs.sendMessage(tab.id!, {
+        type: "get-page-meta",
+      })) as { meta?: PageMeta } | undefined;
+      if (response?.meta) {
+        const record = { ...(records.get(tab.url!) ?? {}), meta: response.meta };
+        records.set(tab.url!, record);
+        updates.set(tab.url!, record);
+      }
+    } catch {
+      // No content script on this page (chrome://, the web store, a tab that
+      // has not finished loading). Nothing to recover.
+    }
+    done++;
+    setProgress(
+      `Reading page metadata… ${done}/${missing.length}`,
+      done / missing.length,
+    );
+  });
+
+  await saveRecords(updates);
+  return updates.size;
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+}
+
 async function run() {
   setProgress("Reading tabs…", null);
   const raw = await collectTabs();
@@ -153,6 +230,7 @@ async function run() {
 
   const urls = raw.map((t) => t.url!);
   const records = await loadRecords(urls);
+  await backfillMeta(raw, records);
 
   // Decide what needs embedding: anything with no cached vector, or whose
   // title, harvested metadata or tags have changed since it was embedded.
@@ -238,11 +316,18 @@ async function run() {
 
   const condensed = distanceMatrix(inputs);
   const merges = linkage(condensed, inputs.length);
+  const maxScores = maxInconsistencies(
+    merges,
+    inputs.length,
+    inconsistencies(merges, inputs.length),
+  );
 
   state = {
     tabs,
     merges,
-    heights: sortedHeights(merges),
+    maxScores,
+    scale: sortedInconsistencies(maxScores),
+    withMeta: tabs.filter((t) => records.get(t.url)?.meta).length,
     collapsed: new Set(),
     selected: new Set(),
     dupeGroups: groupDuplicates(nearDuplicatePairs(inputs, NEAR_DUPLICATE_SIMILARITY)),
@@ -251,6 +336,7 @@ async function run() {
 
   hideProgress();
   el("granularity").hidden = false;
+  resetSliderToDefault();
   render();
 }
 
@@ -309,14 +395,34 @@ function formatIdle(days: number): string {
 
 // ===== Rendering =====
 
+/** Park the slider at the quantile closest to the default inconsistency. */
+function resetSliderToDefault() {
+  if (!state || state.scale.length === 0) return;
+  let best = 0;
+  let bestGap = Infinity;
+  for (let i = 0; i < state.scale.length; i++) {
+    const gap = Math.abs(state.scale[i] - DEFAULT_INCONSISTENCY);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  const position = Math.round((best / Math.max(1, state.scale.length - 1)) * 1000);
+  el<HTMLInputElement>("cut").value = String(position);
+}
+
+/**
+ * Slider position to an inconsistency threshold, by quantile of the values
+ * actually present so every position changes something.
+ */
 function currentThreshold(): number {
-  if (!state || state.heights.length === 0) return 0;
+  if (!state || state.scale.length === 0) return 0;
   const position = Number(el<HTMLInputElement>("cut").value) / 1000;
   const index = Math.min(
-    state.heights.length - 1,
-    Math.max(0, Math.round(position * (state.heights.length - 1))),
+    state.scale.length - 1,
+    Math.max(0, Math.round(position * (state.scale.length - 1))),
   );
-  return state.heights[index];
+  return state.scale[index];
 }
 
 function tabsOf(leaves: number[]): TriageTab[] {
@@ -377,17 +483,20 @@ function render() {
     members: collectMembers(state.merges, state.tabs.length),
     dupeIndices: new Set(state.dupeGroups.flat()),
   };
-  const clusters = cutTree(
+  const clusters = cutTreeInconsistent(
     state.merges,
     state.tabs.length,
     threshold,
+    state.maxScores,
     context.members,
   );
   const ranked = rank(clusters, context);
 
-  el("cut-readout").textContent = `cut ${threshold.toFixed(2)} · ${clusters.length} clusters`;
+  el("cut-readout").textContent = `${clusters.length} clusters`;
+  const metaShare = Math.round((state.withMeta / state.tabs.length) * 100);
   el("stats").textContent =
-    `${state.tabs.length} tabs · ${clusters.length} clusters · ${context.dupeIndices.size} near-duplicates`;
+    `${state.tabs.length} tabs · ${clusters.length} clusters · ` +
+    `${context.dupeIndices.size} near-duplicates · ${metaShare}% with page metadata`;
 
   const host = el("clusters");
   host.replaceChildren(
@@ -834,7 +943,15 @@ function visibleClusterNodes(): number[] {
       if (subs && subs.length > 1) walk(subs);
     }
   };
-  walk(cutTree(state.merges, state.tabs.length, currentThreshold(), members));
+  walk(
+    cutTreeInconsistent(
+      state.merges,
+      state.tabs.length,
+      currentThreshold(),
+      state.maxScores,
+      members,
+    ),
+  );
   return out;
 }
 

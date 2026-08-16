@@ -80,6 +80,52 @@ export function pathTokens(url: string | undefined): string[] {
   return out.slice(0, MAX_PATH_TOKENS);
 }
 
+const TITLE_SEPARATORS = ["|", "–", "—", "·", "»", "::", " - "];
+
+/**
+ * Strip the parts of a tab title that describe the browser rather than the
+ * page: unread counts, and the site name every title from that host repeats.
+ * Both make unrelated tabs on one site look alike, and both crowd out the few
+ * words that actually say what the page is.
+ */
+export function cleanTitle(
+  title: string | undefined,
+  siteName?: string,
+  host?: string | null,
+): string {
+  let out = (title ?? "").trim();
+  if (!out) return "";
+
+  // "(3) name", "(1,204) name", "[5] name". Kept as-is when the count is the
+  // entire title, which happens on pages that never set one.
+  const withoutCount = out.replace(/^[([]\s*[\d,.]+\+?\s*[)\]]\s*/, "").trim();
+  if (withoutCount) out = withoutCount;
+
+  // A trailing site name, however it was separated. Compared loosely, since
+  // "The New York Times" appears as "nytimes.com" in the host.
+  const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const names = [siteName, host, host?.replace(/\.[a-z.]+$/, "")]
+    .filter((v): v is string => Boolean(v))
+    .map(compact)
+    .filter((v) => v.length >= 3);
+
+  for (const separator of TITLE_SEPARATORS) {
+    const at = out.lastIndexOf(separator);
+    if (at <= 0) continue;
+    const tail = out.slice(at + separator.length).trim();
+    if (!tail) continue;
+    const tailKey = compact(tail);
+    if (tailKey.length < 3) continue;
+    if (!names.some((name) => name === tailKey || name.includes(tailKey))) continue;
+    const head = out.slice(0, at).trim();
+    // Never strip away the whole title.
+    if (head.length >= 3) out = head;
+    break;
+  }
+
+  return out;
+}
+
 /**
  * The text handed to the embedding model. Ordered most to least specific,
  * because the model truncates at 256 tokens and the title matters most.
@@ -98,10 +144,11 @@ export function featureText(source: FeatureSource): string {
     lines.push(text);
   };
 
-  add(source.title);
+  const host = hostOf(source.url);
+  add(cleanTitle(source.title, meta.siteName, host));
   add(meta.heading);
   add(meta.description);
-  add(meta.siteName ?? hostOf(source.url) ?? undefined);
+  add(meta.siteName ?? host ?? undefined);
   add(meta.section);
   // og:type alone ("article", "product") is only useful next to the section.
   if (meta.ogType && meta.ogType !== "website") add(meta.ogType);

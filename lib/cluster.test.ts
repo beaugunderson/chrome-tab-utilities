@@ -4,11 +4,15 @@ import {
   type Merge,
   collectMembers,
   cutTree,
+  cutTreeInconsistent,
   distanceMatrix,
   heightRange,
+  inconsistencies,
   linkage,
+  maxInconsistencies,
   nearDuplicatePairs,
   sortedHeights,
+  sortedInconsistencies,
   subCut,
   subCutThreshold,
   subtreeHeights,
@@ -322,6 +326,92 @@ describe("subtreeHeights and subCutThreshold", () => {
   it("yields a threshold that actually splits the subtree", () => {
     const threshold = subCutThreshold(merges, n, broad.node, 0.6);
     expect(subCut(merges, n, broad.node, threshold)).not.toBeNull();
+  });
+});
+
+describe("inconsistency-based cutting", () => {
+  // Densities that genuinely conflict: two tight topics sitting closer to each
+  // other (9 degrees) than the loose topic's own members are to each other
+  // (40 degrees). Any threshold loose enough to hold the spread topic together
+  // has already fused the two tight ones, and any threshold that separates
+  // them has already shattered the spread one.
+  const tightA = [0, 1, 2];
+  const tightB = [9, 10, 11];
+  const loose = [100, 140, 180];
+  const items = [...tightA, ...tightB, ...loose].map((a) => plain(onCircle(a)));
+  const n = items.length;
+  const merges = linkage(distanceMatrix(items), n);
+  const scores = inconsistencies(merges, n);
+  const maxScores = maxInconsistencies(merges, n, scores);
+
+  it("scores one value per merge", () => {
+    expect(scores).toHaveLength(merges.length);
+  });
+
+  it("reports zero where there is too little beneath a merge to judge", () => {
+    // A merge whose children are both leaves has only its own height in the
+    // window, so there is no deviation to measure against.
+    const pair = linkage(distanceMatrix([plain(onCircle(0)), plain(onCircle(9))]), 2);
+    expect(Array.from(inconsistencies(pair, 2))).toEqual([0]);
+  });
+
+  it("never decreases going up the tree", () => {
+    for (let i = 0; i < merges.length; i++) {
+      const { a, b } = merges[i];
+      expect(maxScores[n + i]).toBeGreaterThanOrEqual(maxScores[a]);
+      expect(maxScores[n + i]).toBeGreaterThanOrEqual(maxScores[b]);
+    }
+  });
+
+  const GROUPS = ["0,1,2", "3,4,5", "6,7,8"];
+  const setsAt = (clusters: ReturnType<typeof cutTree>) =>
+    clusters.map((c) => [...c.leaves].sort((a, b) => a - b).join(","));
+
+  it("returns every leaf exactly once at any threshold", () => {
+    for (const t of [0, 0.5, 1, 2, 10]) {
+      const leaves = cutTreeInconsistent(merges, n, t, maxScores).flatMap(
+        (c) => c.leaves,
+      );
+      expect(leaves.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+  });
+
+  it("never increases cluster count as the threshold rises", () => {
+    let previous = Infinity;
+    for (let t = 0; t <= 4; t += 0.1) {
+      const count = cutTreeInconsistent(merges, n, t, maxScores).length;
+      expect(count).toBeLessThanOrEqual(previous);
+      previous = count;
+    }
+  });
+
+  it("cannot be done by any flat cut, which is the whole point", () => {
+    // Establishes the premise rather than assuming it: check every height that
+    // could possibly matter, including just above and below each merge.
+    const candidates = sortedHeights(merges).flatMap((h) => [
+      h - 1e-9,
+      h,
+      h + 1e-9,
+    ]);
+    const flatSucceeds = candidates.some((h) => {
+      const sets = setsAt(cutTree(merges, n, h));
+      return GROUPS.every((g) => sets.includes(g));
+    });
+    expect(flatSucceeds).toBe(false);
+  });
+
+  it("recovers all three topics at once", () => {
+    const worked = sortedInconsistencies(maxScores).some((t) => {
+      const sets = setsAt(cutTreeInconsistent(merges, n, t, maxScores));
+      return GROUPS.every((g) => sets.includes(g));
+    });
+    expect(worked).toBe(true);
+  });
+
+  it("offers a usable slider range", () => {
+    const range = sortedInconsistencies(maxScores);
+    expect(range.length).toBeGreaterThan(1);
+    expect(range).toEqual([...range].sort((a, b) => a - b));
   });
 });
 

@@ -21,9 +21,9 @@ describe("tokenize", () => {
   });
 
   it("keeps ticket-sized numbers, drops short ones", () => {
+    // Hyphenated identifiers stay whole.
     expect(tokenize("KOALA-6561 shipped 4 times")).toEqual([
-      "koala",
-      "6561",
+      "koala-6561",
       "shipped",
       "times",
     ]);
@@ -38,7 +38,9 @@ describe("clusterKeywords", () => {
       on("nytimes.com", "tabs ceasefire talks", "tabs ceasefire summit"),
       on("zillow.com", "tabs ballard listing", "tabs ballard house"),
     ];
-    const keywords = clusterKeywords(clusters);
+    const keywords = clusterKeywords(clusters).map((w) => w.join(" "));
+    // "tabs" is in every cluster, so it must not survive alone or inside a
+    // phrase.
     for (const words of keywords) expect(words).not.toContain("tabs");
     expect(keywords[0]).toContain("embeddings");
     expect(keywords[1]).toContain("ceasefire");
@@ -58,7 +60,7 @@ describe("clusterKeywords", () => {
 
   it("still labels a small cluster from single mentions", () => {
     const cluster = on("example.com", "axolotl husbandry");
-    expect(clusterKeywords([cluster])[0]).toContain("axolotl");
+    expect(clusterKeywords([cluster])[0].join(" ")).toContain("axolotl");
   });
 
   it("returns an empty list for a contentless cluster", () => {
@@ -111,9 +113,30 @@ describe("labelClusters", () => {
       ],
     ];
     const label = labelClusters(clusters)[0];
-    expect(label).not.toContain("·");
-    expect(label).toContain("ceasefire");
-    expect(label).toContain("talks");
+    // "·" separates keywords too, so check for the host itself.
+    expect(label).not.toContain("theverge.com");
+    expect(label).not.toContain("nytimes.com");
+    expect(label).toContain("ceasefire talks");
+  });
+
+  it("keeps a phrase together instead of listing its halves", () => {
+    const clusters = [
+      on("news.local", "ceasefire talks resume", "ceasefire talks continue"),
+    ];
+    const label = labelClusters(clusters)[0];
+    expect(label).toContain("ceasefire talks");
+    // Neither half should also appear on its own.
+    expect(label.split(" · ")).not.toContain("ceasefire");
+    expect(label.split(" · ")).not.toContain("talks");
+  });
+
+  it("preserves the casing words were written in", () => {
+    const clusters = [
+      on("github.com", "KOALA-6561 HDBSCAN rollout", "KOALA-6561 HDBSCAN notes"),
+      on("news.local", "unrelated weather report", "unrelated sports report"),
+    ];
+    expect(labelClusters(clusters)[0]).toContain("KOALA");
+    expect(labelClusters(clusters)[0]).toContain("HDBSCAN");
   });
 
   it("falls back to the site when no keywords survive", () => {

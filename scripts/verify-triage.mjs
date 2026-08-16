@@ -105,9 +105,11 @@ setTimeout(() => {
 setTimeout(() => { document.title = ${JSON.stringify(title)}; }, ${SPA_RENDER_MS});
 </script></body></html>`,
   ]),
+  // Only og:site_name, exactly what x.com serves. Not content: every page on
+  // the site carries the same value, so it cannot identify any of them.
   ...BARE_PAGES.map((slug) => [
     `/${slug}`,
-    `<!doctype html><html><head><meta charset="utf-8"></head><body><p>x</p></body></html>`,
+    `<!doctype html><html><head><meta charset="utf-8"><meta property="og:site_name" content="Bare"><meta property="og:type" content="article"></head><body><p>x</p></body></html>`,
   ]),
 ]);
 

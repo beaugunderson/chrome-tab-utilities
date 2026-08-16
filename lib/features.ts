@@ -33,10 +33,22 @@ export function isRealTitle(title: string | undefined, url: string): boolean {
   return compact(lower) !== compact(host) && compact(lower) !== compact(sld);
 }
 
-/** Whether harvested metadata says anything about the page. */
+/**
+ * Whether harvested metadata says anything about *this page*.
+ *
+ * Only a description or a heading counts. A site name, an og:type and a
+ * section are properties of the site: every page on it carries the same ones,
+ * so they cannot distinguish one page from another.
+ *
+ * This has to be the single definition. It was briefly two — one that counted
+ * a site name and one that did not — and x.com, which serves og:site_name and
+ * nothing else, fell straight into the gap: 78 tabs were reported as read,
+ * their metadata was stored, and they stayed unidentified, with the stored
+ * metadata making the harvest skip them ever after.
+ */
 export function hasMetaContent(meta: PageMeta | undefined): boolean {
   if (!meta) return false;
-  return Boolean(meta.description || meta.heading || meta.section || meta.siteName);
+  return Boolean(meta.description?.trim() || meta.heading?.trim());
 }
 
 export interface FeatureSource {

@@ -62,14 +62,14 @@ const HARVEST_CONCURRENCY = 8;
 const HARVEST_LOAD_TIMEOUT_MS = 20000;
 // A page that yielded nothing is not asked again for this long. It might have
 // been down or behind a login rather than genuinely empty.
+const HARVEST_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 interface HarvestOutcome {
   read: number;
   titleOnly: number;
   empty: number;
   timedOut: number;
 }
-
-const HARVEST_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 const GROUP_COLORS: Array<`${chrome.tabGroups.Color}`> = [
   "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey",
@@ -202,7 +202,12 @@ async function backfillMeta(
   records: Map<string, TabRecord>,
 ): Promise<number> {
   const missing = tabs.filter(
-    (t) => !t.discarded && t.status === "complete" && !records.get(t.url!)?.meta,
+    (t) =>
+      !t.discarded &&
+      t.status === "complete" &&
+      // Metadata that is only a site name does not count as read, so a tab
+      // carrying that from an earlier pass is still worth asking again.
+      !hasMetaContent(records.get(t.url!)?.meta),
   );
   if (missing.length === 0) return 0;
 
@@ -215,8 +220,10 @@ async function backfillMeta(
       const response = (await chrome.tabs.sendMessage(tab.id!, {
         type: "get-page-meta",
       })) as { meta?: PageMeta } | undefined;
-      if (response?.meta) {
-        const record = { ...(records.get(tab.url!) ?? {}), meta: response.meta };
+      // Site name and og:type alone are not content; storing them would mark
+      // the page read and stop it ever being offered again.
+      if (hasMetaContent(response?.meta)) {
+        const record = { ...(records.get(tab.url!) ?? {}), meta: response!.meta };
         records.set(tab.url!, record);
         updates.set(tab.url!, record);
       }
@@ -337,7 +344,9 @@ function harvestTargets(
     const unloaded = t.discarded || t.status === "unloaded";
     if (!unloaded || !t.url?.startsWith("http")) return false;
     const record = records.get(t.url);
-    if (record?.meta) return false;
+    // Same standard as everywhere else: a stored site name is not content, and
+    // must not make a tab permanently ineligible.
+    if (hasMetaContent(record?.meta)) return false;
     // Retried eventually, since a page can be empty because it failed to load.
     return (record?.metaTried ?? 0) < staleBefore;
   });
@@ -603,14 +612,9 @@ async function run() {
   offerBacklog(raw, records);
 }
 
-/**
- * Whether a page's own words were ever read, as opposed to only its title and
- * URL. A description or a heading counts; og:type and a site name do not,
- * since every page on a site shares those.
- */
+/** Whether a page's own words were ever read. One definition, in features.ts. */
 function hasReadableContent(record: TabRecord | undefined): boolean {
-  const meta = record?.meta;
-  return Boolean(meta?.description?.trim() || meta?.heading?.trim());
+  return hasMetaContent(record?.meta);
 }
 
 /**

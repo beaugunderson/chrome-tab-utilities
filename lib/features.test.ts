@@ -3,6 +3,7 @@ import {
   cleanTitle,
   featureFingerprint,
   featureText,
+  hasMetaContent,
   isRealTitle,
   pathTokens,
 } from "./features";
@@ -223,5 +224,33 @@ describe("isRealTitle", () => {
     expect(isRealTitle(undefined, "https://e.com/a")).toBe(false);
     expect(isRealTitle("  ", "https://e.com/a")).toBe(false);
     expect(isRealTitle("ab", "https://e.com/a")).toBe(false);
+  });
+});
+
+describe("hasMetaContent", () => {
+  it("counts a description or a heading", () => {
+    expect(hasMetaContent({ description: "Negotiators met again." })).toBe(true);
+    expect(hasMetaContent({ heading: "Ceasefire talks resume" })).toBe(true);
+  });
+
+  it("does not count properties every page on a site shares", () => {
+    // x.com serves og:site_name and nothing else. Counting that as content
+    // marked 78 tabs as read, stored their metadata, left them unidentified,
+    // and stopped the harvest ever offering them again.
+    expect(hasMetaContent({ siteName: "X" })).toBe(false);
+    expect(hasMetaContent({ ogType: "article" })).toBe(false);
+    expect(hasMetaContent({ section: "World" })).toBe(false);
+    expect(hasMetaContent({ siteName: "X", ogType: "article", section: "World" })).toBe(
+      false,
+    );
+  });
+
+  it("ignores whitespace-only values", () => {
+    expect(hasMetaContent({ description: "   ", heading: "\n" })).toBe(false);
+  });
+
+  it("handles missing metadata", () => {
+    expect(hasMetaContent(undefined)).toBe(false);
+    expect(hasMetaContent({})).toBe(false);
   });
 });

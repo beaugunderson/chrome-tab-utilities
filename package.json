@@ -4,10 +4,9 @@
   "description": "Keyboard shortcuts and popup actions for copy/paste tab URLs, group tabs by domain, sort tabs, close duplicate tabs, merge windows, and split tabs into a new window",
   "type": "module",
   "scripts": {
-    "copy-ort": "node scripts/copy-ort.mjs",
-    "dev": "pnpm copy-ort && wxt",
-    "build": "pnpm copy-ort && wxt build",
-    "zip": "pnpm copy-ort && wxt zip",
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
@@ -25,7 +24,6 @@
     "wxt": "^0.20.20"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "tldts": "^7.0.28"
   }
 }

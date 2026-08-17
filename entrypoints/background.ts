@@ -248,7 +248,11 @@ function setupTabSignals() {
 /** Focus an existing triage tab rather than piling up duplicates. */
 async function openTriagePage() {
   const url = chrome.runtime.getURL("triage.html");
-  const [existing] = await chrome.tabs.query({ url });
+  // The page records which card is showing in its query string, and a match
+  // pattern without the wildcard matches the bare URL only — so an open triage
+  // tab that has dealt a single card would not be found, and a second one
+  // would open next to it.
+  const [existing] = await chrome.tabs.query({ url: `${url}*` });
   if (existing?.id !== undefined) {
     await chrome.tabs.update(existing.id, { active: true });
     if (existing.windowId !== undefined) {

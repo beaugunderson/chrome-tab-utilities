@@ -36,6 +36,10 @@ export interface QueueHandlers {
   preview?(url: string, stripsHeaders: boolean): Preview | null;
   /** Whether the header-stripping rule is in force at all. */
   framing?: boolean;
+  /** Card to open on, so a reloaded page resumes where it left off. */
+  startAt?: number;
+  /** Called with each card as it comes up, so its place can be recorded. */
+  showing?(item: QueueItem, index: number): void;
   /** The page's prose, fetched. Independent of whether it can be framed. */
   readable?(item: QueueItem): Promise<string | null>;
   /** Returns an error string when the disposition could not be carried out. */
@@ -82,7 +86,7 @@ export function openQueue(
     visit: 0,
   };
   const history: Array<{ item: QueueItem; disposition: Disposition }> = [];
-  let index = 0;
+  let index = Math.min(Math.max(handlers.startAt ?? 0, 0), items.length - 1);
   let busy = false;
   /** What the frame was last pointed at, so a refusal can be matched to it. */
   let framedUrl: string | null = null;
@@ -217,6 +221,7 @@ export function openQueue(
       close();
       return;
     }
+    handlers.showing?.(item, index);
     progress.textContent = `${index + 1} of ${items.length}`;
     groupLine.textContent = item.group ?? "";
     groupLine.hidden = !item.group;

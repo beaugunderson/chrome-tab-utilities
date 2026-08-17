@@ -1,9 +1,8 @@
 // Per-URL cache backing the triage page: harvested page metadata, manual tags,
-// the opener graph, and the embedding itself.
+// the opener graph, and when each URL was last the active tab.
 //
 // Chrome drops openerTabId and resets lastAccessed on restart, so both are
-// snapshotted here to survive it. Embeddings are quantized to int8, which is
-// ample for cosine similarity and keeps a 600-tab set around 230KB.
+// snapshotted here to survive it.
 
 import type { PageMeta } from "./features";
 
@@ -12,10 +11,6 @@ const KEY_PREFIX = "tab:";
 const MAX_ENTRIES = 20000;
 
 export interface TabRecord {
-  /** Base64 int8 embedding, absent until the tab has been embedded. */
-  v?: string;
-  /** Feature fingerprint the vector was computed from. */
-  fp?: string;
   meta?: PageMeta;
   /**
    * Title as the page itself reported it. Chrome shows the URL for a tab it
@@ -61,39 +56,6 @@ export interface TabRecord {
 
 function keyFor(url: string): string {
   return KEY_PREFIX + url;
-}
-
-export function quantize(vec: Float32Array): string {
-  const bytes = new Uint8Array(vec.length);
-  for (let i = 0; i < vec.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, vec[i]));
-    // Int8 range mapped onto a signed byte, read back below as a two's
-    // complement value.
-    bytes[i] = Math.round(clamped * 127) & 0xff;
-  }
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-export function dequantize(encoded: string): Float32Array {
-  const binary = atob(encoded);
-  const out = new Float32Array(binary.length);
-  let norm = 0;
-  for (let i = 0; i < binary.length; i++) {
-    const byte = binary.charCodeAt(i);
-    const signed = byte > 127 ? byte - 256 : byte;
-    const value = signed / 127;
-    out[i] = value;
-    norm += value * value;
-  }
-  // Rounding to int8 nudges the vector off the unit sphere; restore it so
-  // cosine similarity stays a plain dot product.
-  norm = Math.sqrt(norm);
-  if (norm > 0) {
-    for (let i = 0; i < out.length; i++) out[i] /= norm;
-  }
-  return out;
 }
 
 export async function loadRecords(

@@ -24,10 +24,9 @@
 }
 
 /*
- * The granularity bar, backlog prompt and selection footer are all
- * display:flex and all start with the `hidden` attribute. A display rule beats
- * the user-agent's `[hidden] { display: none }`, so without this they are
- * visible from the moment the page opens no matter what the code sets.
+ * Elements that start hidden and are display:flex when shown. A display rule
+ * beats the user-agent's `[hidden] { display: none }`, so without this they
+ * are visible from the moment the page opens no matter what the code sets.
  */
 [hidden] {
   display: none !important;
@@ -64,44 +63,9 @@ h1 {
   font-weight: 600;
 }
 
-h2 {
-  margin: 0 0 4px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .stats {
   flex: 1;
   color: var(--muted);
-}
-
-/* ===== Granularity slider ===== */
-
-.granularity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.granularity label {
-  font-weight: 600;
-}
-
-.granularity .end {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.granularity input[type="range"] {
-  flex: 1;
-  max-width: 420px;
-  accent-color: var(--accent);
-}
-
-.readout {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ===== Progress ===== */
@@ -142,223 +106,9 @@ h2 {
   }
 }
 
-.progress-note,
-.note {
+.progress-note {
   margin: 8px 0 0;
   color: var(--muted);
-}
-
-.empty {
-  padding: 24px 20px;
-  color: var(--muted);
-}
-
-/* ===== Clusters ===== */
-
-main {
-  padding: 8px 20px;
-}
-
-.cluster {
-  margin-left: calc(var(--depth) * 20px);
-}
-
-.cluster-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-}
-
-.cluster-header:hover {
-  background: var(--hover);
-}
-
-.chevron {
-  width: 20px;
-  padding: 0;
-  color: var(--muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 10px;
-}
-
-.cluster-name {
-  overflow: hidden;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cluster-meta {
-  flex: 1;
-  color: var(--muted);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.cluster-actions {
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-}
-
-.cluster-header:hover .cluster-actions,
-.cluster-actions:focus-within {
-  opacity: 1;
-}
-
-.cluster-body {
-  padding-left: 8px;
-}
-
-/* ===== Tab rows ===== */
-
-/* A top-level tab row is a cluster of one, so it indents like a cluster. */
-.tab-row {
-  margin-left: calc(var(--depth, 0) * 20px);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 8px 3px 28px;
-  border-radius: 6px;
-}
-
-.tab-row:hover {
-  background: var(--hover);
-}
-
-.tab-row.discarded .tab-title {
-  opacity: 0.55;
-}
-
-.favicon {
-  width: 16px;
-  height: 16px;
-  flex: none;
-}
-
-.tab-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0;
-  color: inherit;
-  text-align: left;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-}
-
-.tab-title:hover {
-  text-decoration: underline;
-}
-
-.tab-host,
-.tab-idle {
-  flex: none;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.tab-idle {
-  width: 56px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.tab-close {
-  width: 20px;
-  flex: none;
-  padding: 0;
-  color: var(--muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  opacity: 0;
-  font-size: 14px;
-}
-
-.tab-row:hover .tab-close {
-  opacity: 1;
-}
-
-/* ===== Tags ===== */
-
-.tags {
-  display: flex;
-  flex: none;
-  gap: 4px;
-}
-
-.tag {
-  padding: 1px 7px;
-  color: var(--fg);
-  /* Chrome's own pill idiom rather than an accent stripe. */
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  border: none;
-  border-radius: 999px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-}
-
-.tag.suggested {
-  color: var(--muted);
-  background: none;
-  border: 1px dashed var(--border);
-}
-
-.tag.add {
-  color: var(--muted);
-  background: none;
-  opacity: 0;
-}
-
-.tab-row:hover .tag.add {
-  opacity: 1;
-}
-
-/* ===== Duplicates ===== */
-
-.dupes {
-  margin: 16px 20px;
-  padding: 12px 16px;
-  background: var(--hover);
-  border-radius: 8px;
-}
-
-.dupe-group {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-/* ===== Selection footer ===== */
-
-.selection {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  left: 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
-}
-
-.selection span {
-  flex: 1;
-  font-weight: 600;
 }
 
 /* ===== Buttons ===== */
@@ -392,33 +142,6 @@ button.danger {
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-
-/* ===== Backlog prompt ===== */
-
-.backlog {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 20px 0;
-  padding: 10px 14px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border-radius: 8px;
-}
-
-.backlog span {
-  flex: 1;
-}
-
-.cluster-check,
-.tab-row input[type="checkbox"] {
-  flex: none;
-  accent-color: var(--accent);
-}
-
-/* Some but not all of the cluster selected. */
-.cluster-check:indeterminate {
-  opacity: 0.7;
 }
 
 /* ===== One-at-a-time queue ===== */
@@ -587,12 +310,6 @@ kbd {
   object-fit: contain;
 }
 
-.queue-preview-note {
-  margin: 14px 0 0;
-  color: var(--muted);
-}
-
-
 .queue-readable {
   max-height: 200px;
   margin: 14px 0 0;
@@ -608,5 +325,6 @@ kbd {
 /* The note sits under a working preview, so it must not eat the frame. */
 .queue-preview-note {
   margin: 6px 0 0;
+  color: var(--muted);
   font-size: 11px;
 }

@@ -29,7 +29,6 @@ export default defineConfig({
       "sidePanel",
       "alarms",
       "storage",
-      "unlimitedStorage",
       "scripting",
       // Undo in the one-at-a-time queue reopens the tab it just closed.
       "sessions",
@@ -48,17 +47,10 @@ export default defineConfig({
     // Chrome grants or withholds the whole list together. Previewing and
     // reading an arbitrary tab is what needs the breadth, and it is no broader
     // than the content script already running on <all_urls>. What it is spent
-    // on: reading PR state from github.com, the one-time embedding-model
-    // download from huggingface.co and *.hf.co, x.com posts as JSON from
-    // cdn.syndication.twimg.com, and saving to readwise.io and api.todoist.com.
+    // on: reading PR state from github.com, x.com posts as JSON from
+    // cdn.syndication.twimg.com, previewing and fetching the text of any tab,
+    // and saving to readwise.io and api.todoist.com.
     host_permissions: ["<all_urls>"],
-    // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
-    // default extension CSP omits wasm-unsafe-eval, and this is the most
-    // permissive policy MV3 allows.
-    content_security_policy: {
-      extension_pages:
-        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
-    },
     commands: {
       "copy-tabs": {
         suggested_key: {

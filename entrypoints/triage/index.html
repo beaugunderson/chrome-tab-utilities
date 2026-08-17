@@ -10,50 +10,15 @@
       <div class="titlebar">
         <h1>Tab triage</h1>
         <div class="stats" id="stats"></div>
-        <button id="fold-all" class="ghost">Collapse all</button>
-        <button id="start-queue" class="ghost" title="Decide one tab at a time (s / t / x / space)">
-          Triage one by one
-        </button>
-        <button id="copy-json" class="ghost" title="Copy the clustering as JSON">
-          Copy JSON
-        </button>
         <button id="rescan" class="ghost">Rescan</button>
       </div>
-
-      <div class="granularity" id="granularity" hidden>
-        <label for="cut">Granularity</label>
-        <span class="end">tight</span>
-        <input id="cut" type="range" min="0" max="1000" value="500" />
-        <span class="end">broad</span>
-        <span class="readout" id="cut-readout"></span>
-      </div>
     </header>
-
-    <div id="backlog" class="backlog" hidden>
-      <span id="backlog-text"></span>
-      <button id="backlog-run" class="ghost">Read them</button>
-      <button id="backlog-dismiss" class="ghost">Not now</button>
-    </div>
 
     <div id="progress" class="progress">
       <div class="progress-label" id="progress-label">Starting…</div>
       <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
       <p class="progress-note" id="progress-note"></p>
     </div>
-
-    <section id="working" class="dupes" hidden></section>
-
-    <main id="clusters"></main>
-
-    <section id="unknown" class="dupes" hidden></section>
-
-    <section id="dupes" class="dupes" hidden></section>
-
-    <footer id="selection" class="selection" hidden>
-      <span id="selection-count"></span>
-      <button id="selection-close" class="danger">Close selected</button>
-      <button id="selection-clear" class="ghost">Clear</button>
-    </footer>
 
     <script type="module" src="./main.ts"></script>
   </body>

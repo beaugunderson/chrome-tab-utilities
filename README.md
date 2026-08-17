@@ -23,44 +23,9 @@ Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's nativ
 
 ## Tab triage
 
-A separate page ("Triage tabs by topic" in the popup, or the `triage-tabs` command) that groups tabs by what they are *about*, for deciding what to close.
+A separate page ("Triage tabs one at a time" in the popup, or the `triage-tabs` command) that deals every open tab as a card and gives you five ways to get rid of it.
 
-Each tab is embedded once with a local [MiniLM](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model via [transformers.js](https://huggingface.co/docs/transformers.js), using its title, harvested page metadata (description, og:title and the twitter: card tags, heading, section), URL path words, and any tags. Those embeddings feed an average-linkage agglomerative clustering pass, which produces a dendrogram — a merge tree — rather than a fixed set of groups.
-
-The **granularity slider** slices that tree. Drag toward "tight" for many small, specific clusters; toward "broad" for a few large ones. Nothing re-clusters while you drag. A cluster shows its own sub-clusters, so a broad "news" cluster opens into per-story groups.
-
-The slice is by *inconsistency* rather than by a fixed distance: a merge counts as a real boundary when it stands well above the merges beneath it, whatever its absolute size. This matters because a tight topic and a sprawling one join up at completely different distances, so any single distance threshold either shreds the sprawling topic or fuses the tight ones into it.
-
-The view opens at a granularity chosen from your own tabs: the coarsest cut where no single cluster has swallowed more than a tenth of them. A fixed setting cannot do this, since where the useful range sits depends on the set.
-
-Everything starts expanded, including sub-clusters and clusters that only appear as you move the slider. "Collapse all" folds the lot; individual collapses stick.
-
-- Clusters are ordered by `size × median idle time × duplicate density`, so the biggest, stalest, most redundant pile is first.
-- Cluster names come from c-TF-IDF over the member titles: words and short phrases frequent inside the cluster and rare across the others, in their original casing. No model call, so names update instantly with the slider.
-- Page metadata is captured just before a tab is auto-discarded, and pulled from every loaded tab when the triage page opens. The stats line shows what share of tabs have it. If tabs were already discarded before this shipped, the page offers a one-off pass that loads each of them once, reads it, and discards it again — stated up front with the count, never automatic. It reads each page as soon as its HTML is parsed and discards it right then, which also cancels the rest of the load, so it runs eight at a time without holding much memory.
-- **Near-duplicates** are found by similarity of the page's own text rather than its URL, which catches the same story on three different sites — something the URL-based duplicate closer structurally cannot. Only tabs whose page has actually been read are eligible: a title and a URL shape are not enough to call two pages the same, or every post by one author looks like a duplicate of every other.
-- x.com posts are read from Twitter's syndication endpoint rather than by loading the page, which serves no per-post metadata at all and never renders in a background tab. One JSON request per post, no page load.
-- Tabs Chrome has never loaded have no title (it shows the URL instead), and if nothing has read the page either then only the address is known. Those can't be clustered by meaning, so they get their own section grouped by site rather than being spread through the clusters, where they would otherwise chain unrelated groups together.
-- Per-cluster actions: close all, keep the 3 most recent, apply as a Chrome tab group, move to a new window, tag all.
-- Selecting every tab in a group ticks the group itself; ticking some leaves it partially filled. Nesting works the same way up the tree.
-- Closing tabs never re-clusters. Closed tabs drop out and everything else stays exactly where it was, so working down the page doesn't move the ground under you. "Rescan" is the deliberate way to recluster, and it holds your granularity across the rebuild.
-- **Tags** are freeform. Tagging a few tabs builds a centroid for that tag, and other tabs near it show the tag ghosted for one-click acceptance. Tags feed back into the embedding, so re-running pulls clusters toward your own taxonomy.
-- **Copy JSON** dumps the clusters with full membership, for judging the grouping outside the browser.
-- Pinned, blank, and new-tab pages are excluded. Nothing is written to a real tab until you press an action.
-
-Everything runs locally. The model weights (~25MB) download from the Hugging Face CDN on first run and are cached by the browser; no tab data leaves the machine. Embeddings are cached per URL as int8 vectors and only recomputed when a tab's title, metadata, or tags change.
-
-The toolbar icon opens a popup listing every action plus live counts for duplicates and windows. A badge on the icon shows the duplicate count across all windows (debounced, only recomputed on URL changes).
-
-## What you actually go back to
-
-The page splits first on engagement, not topic. Tabs you have returned to at least once are listed separately, most-used first, kept out of the clustering and out of any bulk action — on a real 642-tab set those were mail, calendar and a paper being reread, and only 94 of 642 qualified. The other 85% were opened exactly once and never revisited; those are the pile the clustering organises.
-
-Every row and every queue card says which it is ("opened once 44d ago, never returned" / "returned 6×, last 3d ago"), because that single line is usually the whole decision.
-
-## Triage one by one
-
-Clustering collapses the pile but cannot decide for you, and on a real tab set most clusters hold four to nine loosely related tabs — a verdict on the group is often the wrong verdict on its members. "Triage one by one" deals them out one tab at a time, four keys each:
+Opening the page prepares the tabs and deals the first card straight away. Each card shows a **live view of the page itself** in a frame, the page's own prose fetched directly, its title and description, and one line saying how you have treated it ("opened 44d ago, never came back" / "came back on 6 days, last 3d ago") — usually the whole decision.
 
 - **r** — save to Readwise Reader and close
 - **t** — add to Todoist and close
@@ -70,11 +35,26 @@ Clustering collapses the pile but cannot decide for you, and on a real tab set m
 - **e** — show or hide the page text
 - **u** undo, **esc** done
 
-Each card shows the page prose, fetched directly, plus a live view of the page itself, because a title and a description often are not enough to decide with. Sites that refuse to be framed are made to cooperate by stripping those headers for this one tab while the queue is open, and nowhere else.
+Cards arrive grouped by **space**: a site plus its first path segment, so `x.com/simonw` or `github.com/canvas-medical`. The biggest space comes first and arrives whole, longest-untouched first within it, so related tabs land consecutively and the thinking done on one carries into the next. Segments that name a kind of page rather than a place — `status`, `blog`, a date, a numeric id, a long slug — fall back to the bare site. 77 undifferentiated x.com tabs become a list of accounts you can decide about one at a time.
 
-The order comes from the clustering, so tabs about the same thing arrive together and each decision informs the next. A save or task that fails leaves the tab open and says why, rather than closing it and losing it. Undo reopens the last closed tab; anything already sent stays sent.
+Which card is showing is kept in the page's URL, so reloading the page — or coming back after a crash — resumes exactly where you were.
+
+- Most sites refuse to be framed. The preview strips those headers for this one tab while the queue is open, and nowhere else in the browser. When a page is refused anyway the card says which site refused and shows the page's own picture instead — `og:image` for most sites, and for an x.com post the photo itself.
+- YouTube plays in the card: its watch page frames fine, while its embedded player refuses any embedder that is not an ordinary web page.
+- x.com posts are read from Twitter's syndication endpoint rather than by loading the page, which serves no per-post metadata at all and never renders in a background tab. One JSON request per post, no page load.
+- Page metadata is captured just before a tab is auto-discarded, and pulled from every loaded tab when the triage page opens. Nothing is ever reloaded to read it — the card fetches the page's text at the moment you need it.
+- A save or task that fails leaves the tab open and says why, rather than closing it and losing it. Undo reopens the last closed tab; anything already sent stays sent.
+- Pinned, blank, and new-tab pages are excluded. Nothing is written to a real tab until you press a key.
 
 Saving needs tokens on the options page: a [Readwise access token](https://readwise.io/access_token) and a Todoist API token (Settings → Integrations → Developer). Both are stored locally and never synced.
+
+The toolbar icon opens a popup listing every action plus live counts for duplicates and windows. A badge on the icon shows the duplicate count across all windows (debounced, only recomputed on URL changes).
+
+## What you actually go back to
+
+Order splits first on engagement. Tabs you have come back to on **separate days** go last in the queue: on a real 754-tab set that was mail, calendar, LinkedIn, Drive, a trip being planned and a post being reread — 98 of 754. They are the likeliest keeps, and by the time they arrive the pile in front of them is gone.
+
+Days rather than visits, because a mass reload — a crash, a restore — is one day however many tabs it touches, while by visit count 96% of that same set looked like something you keep going back to.
 
 ## Options
 
@@ -87,13 +67,11 @@ pnpm install
 pnpm dev        # launch Chrome with extension loaded
 pnpm build      # production build → .output/chrome-mv3/
 pnpm zip        # zip for Chrome Web Store
-pnpm test       # vitest unit tests for the clustering/labeling/discard logic
+pnpm test       # vitest unit tests for the ordering/discard/preview logic
 pnpm typecheck
 ```
 
-`pnpm build` first runs `scripts/copy-ort.mjs`, which stages the ONNX runtime into `public/ort/` (gitignored). MV3 forbids loading remote script, so the runtime has to be served by the extension itself.
-
-After a build, `node scripts/verify-triage.mjs` runs the triage page end to end: it loads the built extension into a throwaway Chrome profile, opens a set of pages across known topics, and asserts they cluster, that the slider changes granularity monotonically, that near-duplicates are detected, and that every ONNX runtime file the page requests is one `copy-ort.mjs` stages.
+After a build, `node scripts/verify-triage.mjs` runs the triage page end to end: it loads the built extension into a throwaway Chrome profile, opens a set of pages across three spaces, and asserts that the page deals them in space order, that reloading resumes on the same card, that the preview renders despite every fixture sending `X-Frame-Options: DENY`, and that a save with no token fails without closing the tab.
 
 ## Install from source
 

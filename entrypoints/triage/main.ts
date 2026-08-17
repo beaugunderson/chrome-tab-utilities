@@ -45,6 +45,7 @@ import {
   describeEngagement,
   fetchVisitCounts,
 } from "../../lib/engagement";
+import { allowFramingInTab, stopAllowingFraming } from "../../lib/framing";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
 import { type Disposition, type QueueItem, openQueue } from "./queue";
@@ -1942,9 +1943,15 @@ async function applyDisposition(
   return null;
 }
 
-function startQueue() {
+async function startQueue() {
   const items = queueItems();
   if (items.length === 0) return;
+
+  // Let the preview frame load pages that would otherwise refuse to be framed,
+  // for this tab only and only while the queue is open.
+  const self = await chrome.tabs.getCurrent();
+  if (self?.id !== undefined) await allowFramingInTab(self.id);
+
   openQueue(items, {
     apply: applyDisposition,
     async undo(item, disposition) {
@@ -1956,6 +1963,7 @@ function startQueue() {
       await run();
     },
     finished() {
+      void stopAllowingFraming();
       void run();
     },
   });
@@ -2022,7 +2030,7 @@ el("copy-json").addEventListener("click", (e) => {
   );
 });
 
-el("start-queue").addEventListener("click", startQueue);
+el("start-queue").addEventListener("click", () => void startQueue());
 
 el("cut").addEventListener("input", scheduleRender);
 el("rescan").addEventListener("click", () => void run());

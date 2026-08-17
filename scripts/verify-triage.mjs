@@ -159,7 +159,15 @@ const server = createServer((req, res) => {
     res.writeHead(404).end("nope");
     return;
   }
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(body);
+  res
+    .writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      // What most real sites send. The queue preview is only useful if the
+      // extension strips this for its own frames.
+      "x-frame-options": "DENY",
+      "content-security-policy": "frame-ancestors 'none'",
+    })
+    .end(body);
 });
 await new Promise((resolve) => server.listen(PORT, resolve));
 
@@ -741,6 +749,32 @@ try {
   const firstTitle = await triage.textContent(".queue-title");
   const firstProgress = await triage.textContent(".queue-progress");
   console.log(`queue opened at: ${firstProgress} — ${(firstTitle ?? "").slice(0, 50)}`);
+
+  // The card must show the page itself. Title and description are often
+  // useless, and every fixture sends X-Frame-Options: DENY, so this only
+  // passes if the session rule stripped it.
+  await triage.waitForSelector(".queue-preview:not([hidden])", { timeout: 10000 });
+  // Read through Playwright's frame API: the preview is cross-origin, so
+  // contentDocument is null from the page whether or not it loaded.
+  let previewText = null;
+  for (let attempt = 0; attempt < 40 && !previewText; attempt++) {
+    const frame = triage
+      .frames()
+      .find((candidate) => candidate.url().startsWith("http://localhost:8765/"));
+    if (frame) {
+      previewText = await frame
+        .textContent("body")
+        .then((t) => (t ?? "").trim().slice(0, 80))
+        .catch(() => null);
+    }
+    if (!previewText) await new Promise((r) => setTimeout(r, 250));
+  }
+  console.log(`preview rendered: ${JSON.stringify(previewText)}`);
+  if (!previewText) {
+    failures.push(
+      "the queue preview stayed blank; framing headers are not being stripped",
+    );
+  }
 
   // Space skips: no tab closed, queue advances.
   const beforeSkip = await triage.$$eval("main .tab-row", (r) => r.length);

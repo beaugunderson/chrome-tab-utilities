@@ -526,3 +526,24 @@ kbd {
   font-weight: 600;
   font-size: 12px;
 }
+
+.queue-preview {
+  width: 100%;
+  height: min(52vh, 520px);
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.queue-preview-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+}
+
+/* The card is now mostly preview, so it needs the room. */
+.queue-card {
+  width: min(980px, 100%);
+  max-height: 94vh;
+  overflow-y: auto;
+}

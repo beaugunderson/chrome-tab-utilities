@@ -124,6 +124,11 @@ pnpm build  # production build
 
 ## One-at-a-time queue
 
+- **The card shows a live iframe of the page.** Title and description are frequently useless for deciding — an essay on self-respect whose only description is the author name — and the decision is usually obvious the moment the page is visible
+- Most sites refuse framing, so `lib/framing.ts` adds a declarativeNetRequest **session** rule stripping `x-frame-options` and `content-security-policy`, scoped by `tabIds` to the triage tab and by `resourceTypes` to `sub_frame`. The rest of the browser keeps its clickjacking protection, and the rule dies with the browser regardless. Removed when the queue closes
+- Requires `<all_urls>` host permission and `declarativeNetRequestWithHostAccess`. No broader than the content script already running on `<all_urls>`
+- Testing the preview needs Playwright frame API, not `contentDocument`: the frame is cross-origin, so `contentDocument` is null whether or not the page loaded, and a test reading it always fails. The fixtures deliberately send `X-Frame-Options: DENY`, so the check only passes if the stripping works
+
 - `entrypoints/triage/queue.ts`: one tab, four keys — s Readwise, t Todoist, x close, space skip, u undo, esc done. Decisions are per tab, but the order comes from the clustering, so tabs from one cluster arrive consecutively and the thinking done on the last carries into the next
 - Per tab rather than per cluster because the mid-band is loose: on a real 642-tab set, 60 clusters of 4-9 tabs held 54% of everything, and a verdict on such a group is often the wrong verdict on its members. Only 2% were true singletons, so clustering is still doing the ordering work
 - **A failed send never closes the tab.** `applyDisposition` returns an error string, the queue shows it and stays on the item. Closing after a failed save would destroy the thing the save was for

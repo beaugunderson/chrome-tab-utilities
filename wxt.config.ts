@@ -35,6 +35,10 @@ export default defineConfig({
       "sessions",
       // Visit counts separate the tabs you actually use from the pile.
       "history",
+      // Strips X-Frame-Options and frame-ancestors so the queue can show a
+      // live preview. The rule is a session rule scoped to the triage tab
+      // alone, so it is not a browser-wide hole.
+      "declarativeNetRequestWithHostAccess",
     ],
     host_permissions: [
       "*://github.com/*",
@@ -48,6 +52,9 @@ export default defineConfig({
       // Where a saved tab and a tab-turned-task actually go.
       "https://readwise.io/*",
       "https://api.todoist.com/*",
+      // Needed to preview an arbitrary tab, and no broader than the content
+      // script already running on <all_urls>.
+      "<all_urls>",
     ],
     // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
     // default extension CSP omits wasm-unsafe-eval, and this is the most

@@ -81,6 +81,19 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   const detail = document.createElement("p");
   detail.className = "queue-detail";
 
+  // A live view of the page. Title and description are frequently useless —
+  // "Alex Burgin" tells you nothing about an essay on self-respect — and the
+  // decision is usually obvious the moment you can see the thing.
+  const preview = document.createElement("iframe");
+  preview.className = "queue-preview";
+  preview.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  preview.setAttribute("referrerpolicy", "no-referrer");
+  preview.setAttribute("loading", "eager");
+
+  const previewNote = document.createElement("p");
+  previewNote.className = "queue-preview-note";
+  previewNote.hidden = true;
+
   const error = document.createElement("p");
   error.className = "queue-error";
   error.hidden = true;
@@ -126,6 +139,8 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     link,
     engagement,
     detail,
+    preview,
+    previewNote,
     error,
     actions,
     footer,
@@ -150,11 +165,32 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     engagement.hidden = !item.engagement;
     detail.textContent = item.detail ?? "";
     detail.hidden = !item.detail;
+    showPreview(item);
     error.hidden = true;
     tally.textContent =
       `${counts.save} saved · ${counts.task} tasks · ` +
       `${counts.close} closed · ${counts.skip} skipped`;
     undoButton.disabled = history.length === 0;
+  }
+
+  /**
+   * Point the preview at the current page.
+   *
+   * Blanked between items so the previous page is never left on screen next to
+   * the next one's title, which would be worse than showing nothing: the whole
+   * point is deciding about what is in front of you.
+   */
+  function showPreview(item: QueueItem) {
+    preview.src = "about:blank";
+    previewNote.hidden = true;
+    if (!/^https?:/.test(item.url)) {
+      preview.hidden = true;
+      previewNote.textContent = "No preview for this kind of page.";
+      previewNote.hidden = false;
+      return;
+    }
+    preview.hidden = false;
+    preview.src = item.url;
   }
 
   async function decide(disposition: Disposition) {

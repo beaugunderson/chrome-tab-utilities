@@ -776,6 +776,26 @@ try {
     );
   }
 
+  // A refused preview must be reported rather than left as a grey box, and
+  // the only signal for one is a navigation error on the frame. Walking the
+  // queue to a card that fails crashes Playwright's frame manager, so what is
+  // checked here is that the watcher is live: the realistic way this breaks is
+  // the permission going missing, exactly as declarativeNetRequest once did.
+  const watching = await triage.evaluate(() => ({
+    api: typeof chrome.webNavigation,
+    listening: chrome.webNavigation?.onErrorOccurred?.hasListeners?.() ?? false,
+  }));
+  console.log(
+    `refusal watcher: chrome.webNavigation is ${watching.api}, ` +
+      `listening: ${watching.listening}`,
+  );
+  if (watching.api === "undefined") {
+    failures.push("chrome.webNavigation is missing; refused previews cannot be detected");
+  }
+  if (!watching.listening) {
+    failures.push("nothing is watching for refused previews while the queue is open");
+  }
+
   // The preview should dominate the card, and the buttons must stay on screen
   // — a frame that grows by pushing the actions out of view is worse than a
   // small one.

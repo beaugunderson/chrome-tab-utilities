@@ -47,8 +47,12 @@ import {
   fetchEngagement,
   fetchSweepTimes,
 } from "../../lib/engagement";
-import { allowFramingInTab, stopAllowingFraming } from "../../lib/framing";
-import { previewFor } from "../../lib/preview";
+import {
+  allowFramingInTab,
+  stopAllowingFraming,
+  watchBlockedFrames,
+} from "../../lib/framing";
+import { type Preview, previewFor } from "../../lib/preview";
 import { fetchReadableText } from "../../lib/readable";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
@@ -330,6 +334,7 @@ async function harvestTweets(
         ...record.meta,
         description: tweet.text.slice(0, 400),
         siteName: tweet.author ? `${tweet.author} on X` : "X",
+        image: tweet.image,
       };
       read++;
     } else {
@@ -1971,9 +1976,12 @@ async function startQueue() {
   // without previews is still a working queue, and this failing silently once
   // stopped the button doing anything at all.
   let framing = false;
+  let tabId: number | undefined;
+  let unwatch: (() => void) | undefined;
   try {
     const self = await chrome.tabs.getCurrent();
     if (self?.id === undefined) throw new Error("no tab id for this page");
+    tabId = self.id;
     // Chrome exposes this namespace only to an instance whose manifest asked
     // for it, and an unpacked extension keeps running the manifest it was
     // loaded with. So an instance loaded before the permission existed reports
@@ -2009,10 +2017,15 @@ async function startQueue() {
     );
   }
 
-  openQueue(items, {
+  const queue = openQueue(items, {
     apply: applyDisposition,
     readable: (item) => fetchReadableText(item.url),
-    preview: (url) => previewFor(url, framing),
+    framing,
+    // Where nothing framable exists, the page's own picture: og:image for most
+    // sites, and for an x.com post the photo the syndication endpoint returns,
+    // which is the only picture of a post there is.
+    preview: (url, stripsHeaders) =>
+      previewFor(url, stripsHeaders) ?? (stripsHeaders ? null : harvestedStill(url)),
     async undo(item, disposition) {
       // Whatever was sent has been sent; what can be undone is the closing.
       if (disposition === "skip" || disposition === "visit") return;
@@ -2022,12 +2035,32 @@ async function startQueue() {
       await run();
     },
     finished() {
+      unwatch?.();
       // Nothing here is worth an unhandled rejection: the rule dies with the
       // browser anyway, and it was never installed if framing was unavailable.
       void stopAllowingFraming().catch(() => {});
       void run();
     },
   });
+
+  // A refused frame is indistinguishable from a slow one from inside the page,
+  // so the card only knows to show something else if the browser says so.
+  unwatch = tabId === undefined
+    ? undefined
+    : watchBlockedFrames(tabId, (url) => queue.previewBlocked(url));
+}
+
+/**
+ * The page's own picture, from whatever was harvested for it.
+ *
+ * Used where a live view cannot be had. For most sites this is og:image; for
+ * an x.com post it is the photo the syndication endpoint returned, which is
+ * the only picture of a post that exists outside the site.
+ */
+function harvestedStill(url: string): Preview | null {
+  const image = state?.records.get(url)?.meta?.image;
+  if (!image) return null;
+  return { kind: "image", url: image, note: "Showing the page's own image." };
 }
 
 // ===== Wiring =====

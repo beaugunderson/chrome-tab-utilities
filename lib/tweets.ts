@@ -17,6 +17,8 @@ export interface Tweet {
   text: string;
   author?: string;
   handle?: string;
+  /** The post's photo, or a video's poster frame, when it has one. */
+  image?: string;
 }
 
 /** The post id in an x.com or twitter.com status URL, if it is one. */
@@ -53,6 +55,9 @@ export async function fetchTweet(id: string): Promise<Tweet | null> {
     const data = (await response.json()) as {
       text?: string;
       user?: { name?: string; screen_name?: string };
+      photos?: Array<{ url?: string }>;
+      mediaDetails?: Array<{ type?: string; media_url_https?: string }>;
+      video?: { poster?: string };
     };
     const text = data.text?.trim();
     if (!text) return null;
@@ -60,6 +65,11 @@ export async function fetchTweet(id: string): Promise<Tweet | null> {
       text,
       author: data.user?.name,
       handle: data.user?.screen_name,
+      // x.com cannot be framed, so its picture is the only picture there is.
+      image:
+        data.photos?.[0]?.url ??
+        data.mediaDetails?.find((m) => m.type === "photo")?.media_url_https ??
+        data.video?.poster,
     };
   } catch {
     // Deleted, protected, or the endpoint refused. Nothing to recover.

@@ -50,3 +50,27 @@ export async function stopAllowingFraming(): Promise<void> {
     removeRuleIds: [RULE_ID],
   });
 }
+
+/**
+ * Report previews the browser refused to load, for this tab's sub-frames.
+ *
+ * A blocked frame fires the iframe's own load event exactly like a working
+ * one and leaves nothing readable behind, since it is cross-origin either way.
+ * The navigation is the only place the difference shows: a site that refuses
+ * produces net::ERR_BLOCKED_BY_RESPONSE rather than a completed load. Without
+ * this a preview that the rule failed to unblock is indistinguishable from one
+ * still loading, which is how a dead grey box ends up being the whole card.
+ *
+ * Returns a function that stops watching.
+ */
+export function watchBlockedFrames(
+  tabId: number,
+  onBlocked: (url: string, error: string) => void,
+): () => void {
+  const listener = (details: { tabId: number; frameId: number; url: string; error: string }) => {
+    if (details.tabId !== tabId || details.frameId === 0) return;
+    onBlocked(details.url, details.error);
+  };
+  chrome.webNavigation.onErrorOccurred.addListener(listener);
+  return () => chrome.webNavigation.onErrorOccurred.removeListener(listener);
+}

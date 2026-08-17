@@ -28,8 +28,14 @@ export interface QueueItem {
 export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
 export interface QueueHandlers {
-  /** A stand-in for a page that refuses to be framed, if one exists. */
-  preview?(url: string): Preview | null;
+  /**
+   * A stand-in for a page that refuses to be framed, if one exists.
+   * `stripsHeaders` is false once the browser has refused this page, so the
+   * answer can be a still where framing was going to be a live view.
+   */
+  preview?(url: string, stripsHeaders: boolean): Preview | null;
+  /** Whether the header-stripping rule is in force at all. */
+  framing?: boolean;
   /** The page's prose, fetched. Independent of whether it can be framed. */
   readable?(item: QueueItem): Promise<string | null>;
   /** Returns an error string when the disposition could not be carried out. */
@@ -57,8 +63,16 @@ const LABELS: Record<Disposition, string> = {
   visit: "Go to tab",
 };
 
-export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
-  if (items.length === 0) return;
+export interface QueueHandle {
+  /** The browser refused to load this preview; show something else. */
+  previewBlocked(url: string): void;
+}
+
+export function openQueue(
+  items: QueueItem[],
+  handlers: QueueHandlers,
+): QueueHandle {
+  if (items.length === 0) return { previewBlocked() {} };
 
   const counts: Record<Disposition, number> = {
     save: 0,
@@ -70,6 +84,8 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   const history: Array<{ item: QueueItem; disposition: Disposition }> = [];
   let index = 0;
   let busy = false;
+  /** What the frame was last pointed at, so a refusal can be matched to it. */
+  let framedUrl: string | null = null;
 
   const root = document.createElement("div");
   root.className = "queue";
@@ -226,7 +242,8 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
    * the next one's title, which would be worse than showing nothing: the whole
    * point is deciding about what is in front of you.
    */
-  function showPreview(item: QueueItem) {
+  function showPreview(item: QueueItem, stripsHeaders = handlers.framing !== false) {
+    framedUrl = null;
     preview.src = "about:blank";
     preview.hidden = true;
     previewImage.hidden = true;
@@ -240,7 +257,7 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
 
     // Some sites need a stand-in: an address built to be framed, or a still
     // image where nothing framable exists.
-    const stand = handlers.preview?.(item.url) ?? null;
+    const stand = handlers.preview?.(item.url, stripsHeaders) ?? null;
     if (stand) {
       previewNote.textContent = stand.note;
       previewNote.hidden = false;
@@ -256,7 +273,8 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
       previewImage.src = stand.url;
     } else {
       preview.hidden = false;
-      preview.src = stand?.url ?? item.url;
+      framedUrl = stand?.url ?? item.url;
+      preview.src = framedUrl;
     }
 
     // Fetched separately, because plenty of sites refuse to be framed at all
@@ -271,6 +289,32 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
       readable.textContent = text ?? "";
       syncProse();
     });
+  }
+
+  /**
+   * Fall back after the browser refuses to load the framed page.
+   *
+   * A refused frame renders as a grey box that reads like a page still
+   * loading, so the card has to say what happened and put whatever else it
+   * has in that space: the page's own picture where there is one, and its
+   * text, which is fetched and so does not depend on framing at all.
+   */
+  function previewBlocked(url: string) {
+    const item = items[index];
+    if (!item || framedUrl !== url) return;
+    showPreview(item, false);
+    if (preview.hidden === false) {
+      // Nothing framable and no still: the frame is worse than empty space.
+      preview.hidden = true;
+      preview.src = "about:blank";
+      framedUrl = null;
+    }
+    if (previewNote.hidden) {
+      previewNote.textContent = `${hostOf(url)} refused to be framed.`;
+      previewNote.hidden = false;
+    }
+    proseOpen = true;
+    syncProse();
   }
 
   /** The toggle stays put between cards, so it is set once and not per tab. */
@@ -354,4 +398,15 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
 
   document.addEventListener("keydown", onKey, true);
   render();
+
+  return { previewBlocked };
+}
+
+/** The host of a URL, for saying which site refused. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "this page";
+  }
 }

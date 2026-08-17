@@ -9,6 +9,8 @@ export interface PageMeta {
   section?: string;
   ogType?: string;
   heading?: string;
+  /** og:image, shown when the page itself refuses to be framed. */
+  image?: string;
 }
 
 /**

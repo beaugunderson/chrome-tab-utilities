@@ -39,6 +39,10 @@ export default defineConfig({
       // live preview. The rule is a session rule scoped to the triage tab
       // alone, so it is not a browser-wide hole.
       "declarativeNetRequestWithHostAccess",
+      // A blocked preview fires the iframe's load event exactly like a working
+      // one, so this is the only way to know a site refused. Adds no warning
+      // beyond the one `history` already carries.
+      "webNavigation",
     ],
     // One entry, because every named host this talks to is a subset of it and
     // Chrome grants or withholds the whole list together. Previewing and

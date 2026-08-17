@@ -105,6 +105,10 @@ function harvest(): PageMeta {
       attr('meta[name="section"]') ??
       jsonLdType(),
     ogType: attr('meta[property="og:type"]'),
+    // Server-rendered like the rest of the og tags, and the only picture of a
+    // page that will not let itself be framed.
+    image:
+      attr('meta[property="og:image"]') ?? attr('meta[name="twitter:image"]'),
     heading: heading ? heading.slice(0, MAX_FIELD_LENGTH) : undefined,
   };
 }

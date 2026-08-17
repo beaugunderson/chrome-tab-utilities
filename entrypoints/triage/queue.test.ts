@@ -64,6 +64,48 @@ describe("the queue preview", () => {
     expect(image().hidden).toBe(true);
   });
 
+  it("shows the page's own image once the browser refuses to frame it", () => {
+    // A refused frame renders as a grey box that reads like a slow load, and
+    // the iframe's load event fires for it exactly as for a working page.
+    const still = {
+      kind: "image" as const,
+      url: "https://pbs.twimg.com/media/abc.jpg",
+      note: "Showing the page's own image.",
+    };
+    const handle = openQueue([item("https://x.com/simonw/status/1")], {
+      ...handlers(true),
+      preview: (_url, stripsHeaders) => (stripsHeaders ? null : still),
+    });
+    expect(frame().hidden).toBe(false);
+
+    handle.previewBlocked("https://x.com/simonw/status/1");
+
+    expect(image().hidden).toBe(false);
+    expect(image().src).toBe(still.url);
+    expect(frame().hidden).toBe(true);
+  });
+
+  it("says which site refused when it has nothing to show instead", () => {
+    const handle = openQueue([item("https://fs.blog/great-talks/")], handlers(true));
+
+    handle.previewBlocked("https://fs.blog/great-talks/");
+
+    expect(frame().hidden).toBe(true);
+    expect(image().hidden).toBe(true);
+    expect(document.querySelector(".queue-preview-note")?.textContent).toBe(
+      "fs.blog refused to be framed.",
+    );
+  });
+
+  it("ignores a refusal that belongs to a card already moved past", () => {
+    const handle = openQueue([item("https://fs.blog/one/")], handlers(true));
+
+    handle.previewBlocked("https://example.com/something-else");
+
+    expect(frame().hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>(".queue-preview-note")?.hidden).toBe(true);
+  });
+
   it("offers no preview for a page that is not on the web", () => {
     openQueue([item("chrome://extensions/")], handlers());
 

@@ -12,8 +12,9 @@ const item = (url: string): QueueItem => ({
   windowId: 1,
 });
 
-const handlers = () => ({
-  preview: previewFor,
+// Framing off, so the video takes the still-image path this file is about.
+const handlers = (stripsHeaders = false) => ({
+  preview: (url: string) => previewFor(url, stripsHeaders),
   apply: vi.fn(async () => null),
   undo: vi.fn(async () => {}),
   finished: vi.fn(),
@@ -27,7 +28,15 @@ afterEach(() => {
 });
 
 describe("the queue preview", () => {
-  it("shows a still frame for a video that refuses to be framed", () => {
+  it("frames a video's own page when the framing rule is in force", () => {
+    openQueue([item("https://www.youtube.com/watch?v=_E3Qz7C9KEk")], handlers(true));
+
+    expect(frame().hidden).toBe(false);
+    expect(frame().src).toBe("https://www.youtube.com/watch?v=_E3Qz7C9KEk");
+    expect(image().hidden).toBe(true);
+  });
+
+  it("shows a still frame for a video when framing is unavailable", () => {
     openQueue([item("https://www.youtube.com/watch?v=_E3Qz7C9KEk")], handlers());
 
     expect(image().hidden).toBe(false);

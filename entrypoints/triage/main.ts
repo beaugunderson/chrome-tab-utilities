@@ -1970,6 +1970,16 @@ async function startQueue() {
   try {
     const self = await chrome.tabs.getCurrent();
     if (self?.id === undefined) throw new Error("no tab id for this page");
+    // declarativeNetRequestWithHostAccess strips headers only for sites the
+    // extension can reach, and Chrome lets that access be narrowed to "on
+    // click" per site. Withheld access looks exactly like a site refusing to
+    // be framed, so it is worth saying which one it is.
+    const granted = await chrome.permissions.contains({ origins: ["https://*/*"] });
+    if (!granted) {
+      throw new Error(
+        "site access is withheld; set this extension to run on all sites",
+      );
+    }
     await allowFramingInTab(self.id);
     // Read back rather than assume: the call resolving does not prove a rule
     // was installed, and a silently absent rule looks exactly like a site
@@ -1989,7 +1999,7 @@ async function startQueue() {
   openQueue(items, {
     apply: applyDisposition,
     readable: (item) => fetchReadableText(item.url),
-    preview: previewFor,
+    preview: (url) => previewFor(url, framing),
     async undo(item, disposition) {
       // Whatever was sent has been sent; what can be undone is the closing.
       if (disposition === "skip" || disposition === "visit") return;

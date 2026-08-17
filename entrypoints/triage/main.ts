@@ -43,7 +43,9 @@ import { fetchTweet, isWorthReading, tweetIdFromUrl } from "../../lib/tweets";
 import {
   classifyVisits,
   describeEngagement,
-  fetchVisitCounts,
+  type Engagement,
+  fetchEngagement,
+  fetchSweepTimes,
 } from "../../lib/engagement";
 import { allowFramingInTab, stopAllowingFraming } from "../../lib/framing";
 import { previewFor } from "../../lib/preview";
@@ -121,8 +123,8 @@ interface TriageTab {
   tags: string[];
   /** Harvested heading with site boilerplate removed; used for labels. */
   heading?: string;
-  /** Times this URL has been visited, from browsing history. */
-  visits: number;
+  /** Distinct days this URL was visited on, this page's sweeps discounted. */
+  engagement: Engagement;
   vec: Float32Array;
 }
 
@@ -658,7 +660,7 @@ async function run() {
   }
 
   setProgress("Reading visit history…", null);
-  const visitCounts = await fetchVisitCounts(urls);
+  const engagements = await fetchEngagement(urls, await fetchSweepTimes());
 
   setProgress("Clustering…", null);
   const now = Date.now();
@@ -672,17 +674,17 @@ async function run() {
     // lastAccessed resets on browser restart, so fall back to the snapshot the
     // background keeps per URL, whichever is more recent.
     const lastSeen = Math.max(t.lastAccessed ?? 0, record.seen ?? 0);
-    const visits = visitCounts.get(urls[i]) ?? 0;
+    const engagement = engagements.get(urls[i]) ?? classifyVisits(0, 0);
     // Three piles, in order of how much they need deciding about. A tab you go
     // back to is a tool; a tab nothing is known about cannot be clustered; the
     // rest is the pile.
     const bucket = isUnidentified(t.title, urls[i], record)
       ? unidentified
-      : classifyVisits(visits).returned
+      : engagement.returned
         ? working
         : tabs;
     bucket.push({
-      visits,
+      engagement,
       id: t.id!,
       windowId: t.windowId!,
       title: bestTitle(t.title, record, urls[i]),
@@ -1302,8 +1304,10 @@ function renderTab(tab: TriageTab): HTMLElement {
   const idle = document.createElement("span");
   idle.className = "tab-idle";
   idle.textContent =
-    tab.visits > 1 ? `${tab.visits}× · ${formatIdle(idleDays(tab))}` : formatIdle(idleDays(tab));
-  idle.title = describeEngagement(tab.visits, idleDays(tab));
+    tab.engagement.days > 1
+      ? `${tab.engagement.days}d · ${formatIdle(idleDays(tab))}`
+      : formatIdle(idleDays(tab));
+  idle.title = describeEngagement(tab.engagement, idleDays(tab));
 
   const close = document.createElement("button");
   close.className = "tab-close";
@@ -1513,17 +1517,17 @@ function renderWorking() {
   host.replaceChildren();
 
   const heading = document.createElement("h2");
-  heading.textContent = `${live.length} tabs you keep going back to`;
+  heading.textContent = `${live.length} tabs you come back to on separate days`;
 
   const note = document.createElement("p");
   note.className = "note";
   note.textContent =
-    "Everything else here was opened once and never revisited. These were not, " +
-    "so they are kept out of the clustering and out of any bulk action — " +
-    "most-used first.";
+    "These were opened again on separate days, which everything else here was " +
+    "not, so they are kept out of the clustering and out of any bulk action — " +
+    "most days first. A night of mass reloads counts for one day, not many.";
 
   host.append(heading, note);
-  for (const tab of [...live].sort((a, b) => b.visits - a.visits)) {
+  for (const tab of [...live].sort((a, b) => b.engagement.days - a.engagement.days)) {
     host.append(renderTab(tab));
   }
 }
@@ -1898,7 +1902,7 @@ function queueItems(): QueueItem[] {
     favIconUrl: tab.favIconUrl,
     idleDays: Math.round(idleDays(tab)),
     detail: state!.records.get(tab.url)?.meta?.description ?? tab.heading,
-    engagement: describeEngagement(tab.visits, idleDays(tab)),
+    engagement: describeEngagement(tab.engagement, idleDays(tab)),
     group,
   });
 
@@ -1912,7 +1916,7 @@ function queueItems(): QueueItem[] {
   }
   // The tabs you go back to come last: they are the ones most likely to be
   // keeps, and by then the pile in front of them is gone.
-  for (const tab of [...state.working].sort((a, b) => a.visits - b.visits)) {
+  for (const tab of [...state.working].sort((a, b) => a.engagement.days - b.engagement.days)) {
     if (!unidentifiedClosed.has(tab.id)) items.push(toItem(tab, "You return to these"));
   }
   return items;
@@ -1970,6 +1974,15 @@ async function startQueue() {
   try {
     const self = await chrome.tabs.getCurrent();
     if (self?.id === undefined) throw new Error("no tab id for this page");
+    // Chrome exposes this namespace only to an instance whose manifest asked
+    // for it, and an unpacked extension keeps running the manifest it was
+    // loaded with. So an instance loaded before the permission existed reports
+    // the API as undefined until it is reloaded, and every preview fails.
+    if (!chrome.declarativeNetRequest) {
+      throw new Error(
+        "this instance predates the framing permission — reload the extension",
+      );
+    }
     // declarativeNetRequestWithHostAccess strips headers only for sites the
     // extension can reach, and Chrome lets that access be narrowed to "on
     // click" per site. Withheld access looks exactly like a site refusing to
@@ -2009,7 +2022,9 @@ async function startQueue() {
       await run();
     },
     finished() {
-      void stopAllowingFraming();
+      // Nothing here is worth an unhandled rejection: the rule dies with the
+      // browser anyway, and it was never installed if framing was unavailable.
+      void stopAllowingFraming().catch(() => {});
       void run();
     },
   });

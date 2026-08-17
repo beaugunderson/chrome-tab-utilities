@@ -40,6 +40,9 @@ import {
 } from "../../lib/store";
 import { removeTabs } from "../../lib/tabs";
 import { fetchTweet, isWorthReading, tweetIdFromUrl } from "../../lib/tweets";
+import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
+import { readTokens } from "../../lib/tokens";
+import { type Disposition, type QueueItem, openQueue } from "./queue";
 import { domainKey, hostOf } from "../../lib/url";
 
 const NEAR_DUPLICATE_SIMILARITY = 0.95;
@@ -1791,6 +1794,102 @@ async function copyOut(text: string, button: HTMLElement) {
   }, 1200);
 }
 
+// ===== One at a time =====
+
+/**
+ * The queue, ordered by cluster.
+ *
+ * Decisions are per tab, but the order is not arbitrary: tabs from one cluster
+ * arrive consecutively, so the thinking done on the last one carries into the
+ * next. Unidentified tabs come last, grouped by account, because they are the
+ * least decidable and by then the pile is smaller.
+ */
+function queueItems(): QueueItem[] {
+  if (!state) return [];
+  const context: RenderContext = {
+    members: collectMembers(state.merges, state.tabs.length),
+    dupeIndices: new Set(state.dupeGroups.flat()),
+  };
+  const ranked = rank(
+    cutTreeInconsistent(
+      state.merges,
+      state.tabs.length,
+      currentThreshold(),
+      state.maxScores,
+      context.members,
+    ),
+    context,
+  );
+
+  const toItem = (tab: TriageTab, group?: string): QueueItem => ({
+    id: tab.id,
+    title: tab.title,
+    url: tab.url,
+    host: tab.host,
+    favIconUrl: tab.favIconUrl,
+    idleDays: Math.round(idleDays(tab)),
+    detail: state!.records.get(tab.url)?.meta?.description ?? tab.heading,
+    group,
+  });
+
+  const items = ranked.flatMap((entry) =>
+    entry.tabs.map((tab) =>
+      toItem(tab, `${entry.label} · ${entry.tabs.length} tabs`),
+    ),
+  );
+  for (const tab of state.unidentified) {
+    if (!unidentifiedClosed.has(tab.id)) items.push(toItem(tab, spaceKey(tab)));
+  }
+  return items;
+}
+
+async function applyDisposition(
+  item: QueueItem,
+  disposition: Disposition,
+): Promise<string | null> {
+  if (disposition === "skip") return null;
+
+  if (disposition !== "close") {
+    const tokens = await readTokens();
+    const token = disposition === "save" ? tokens.readwise : tokens.todoist;
+    const service = disposition === "save" ? "Readwise" : "Todoist";
+    if (!token) return `No ${service} token set — add one on the options page`;
+
+    const request =
+      disposition === "save"
+        ? readwiseRequest(token, { url: item.url, title: item.title })
+        : todoistRequest(token, { url: item.url, title: item.title });
+    const result = await send(request);
+    // The tab stays open on failure. Closing it would lose the thing the
+    // disposition was meant to preserve.
+    if (!result.ok) return result.error ?? "request failed";
+  }
+
+  await removeTabs([item.id]);
+  forgetTabs([item.id]);
+  unidentifiedClosed.add(item.id);
+  return null;
+}
+
+function startQueue() {
+  const items = queueItems();
+  if (items.length === 0) return;
+  openQueue(items, {
+    apply: applyDisposition,
+    async undo(item, disposition) {
+      // Whatever was sent has been sent; what can be undone is the closing.
+      if (disposition === "skip") return;
+      await chrome.sessions.restore();
+      state?.removed.clear();
+      unidentifiedClosed.delete(item.id);
+      await run();
+    },
+    finished() {
+      void run();
+    },
+  });
+}
+
 // ===== Wiring =====
 
 /** Every visible cluster node, so "collapse all" reaches sub-clusters too. */
@@ -1851,6 +1950,8 @@ el("copy-json").addEventListener("click", (e) => {
     e.currentTarget as HTMLElement,
   );
 });
+
+el("start-queue").addEventListener("click", startQueue);
 
 el("cut").addEventListener("input", scheduleRender);
 el("rescan").addEventListener("click", () => void run());

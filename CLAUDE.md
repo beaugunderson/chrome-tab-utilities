@@ -115,6 +115,16 @@ pnpm build  # production build
 
 - Every build stamps `__BUILD_ID__` (wxt.config.ts `define`). The JSON export carries the page's build, and each harvested record carries the build of the content script that answered. **Content scripts do not update in already-open tabs until those tabs navigate**, so a stale one can answer a fresh page and the result is indistinguishable from a broken feature: a whole round was spent on 78 tabs whose records lacked a field the new build sends unconditionally. Compare `build` and `answeredByBuild` before diagnosing anything
 
+## One-at-a-time queue
+
+- `entrypoints/triage/queue.ts`: one tab, four keys — s Readwise, t Todoist, x close, space skip, u undo, esc done. Decisions are per tab, but the order comes from the clustering, so tabs from one cluster arrive consecutively and the thinking done on the last carries into the next
+- Per tab rather than per cluster because the mid-band is loose: on a real 642-tab set, 60 clusters of 4-9 tabs held 54% of everything, and a verdict on such a group is often the wrong verdict on its members. Only 2% were true singletons, so clustering is still doing the ordering work
+- **A failed send never closes the tab.** `applyDisposition` returns an error string, the queue shows it and stays on the item. Closing after a failed save would destroy the thing the save was for
+- Readwise is `POST https://readwise.io/api/v3/save/` with `Authorization: Token` (50/min). Todoist is `POST https://api.todoist.com/api/v1/tasks` with `Authorization: Bearer` — **not** `rest/v2`, which is retired and answers 410
+- Tokens live in `chrome.storage.local` (`lib/tokens.ts`), never `sync`: a credential should not be copied to every machine on the profile
+- Undo reopens the closed tab via `chrome.sessions.restore()`. What was already sent to Readwise or Todoist stays sent; undo is about the tab
+- Idle time is close to useless for ranking on a real set: p25 8 days, median 16, p75 19. Ranking by "closure value" is therefore nearly ranking by size alone
+
 ## Notes
 
 - Offscreen document is required because MV3 service workers have no DOM/clipboard access

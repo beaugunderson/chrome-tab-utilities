@@ -724,6 +724,41 @@ try {
   await triage.reload();
   await triage.waitForSelector("#granularity:not([hidden])", { timeout: 120000 });
 
+
+  // The one-at-a-time queue: keyboard-driven, and a failed save must not close
+  // the tab it was meant to preserve.
+  await triage.click("#start-queue");
+  await triage.waitForSelector(".queue-card", { timeout: 10000 });
+  const firstTitle = await triage.textContent(".queue-title");
+  const firstProgress = await triage.textContent(".queue-progress");
+  console.log(`queue opened at: ${firstProgress} — ${(firstTitle ?? "").slice(0, 50)}`);
+
+  // Space skips: no tab closed, queue advances.
+  const beforeSkip = await triage.$$eval("main .tab-row", (r) => r.length);
+  await triage.keyboard.press("Space");
+  const afterSkip = await triage.$$eval("main .tab-row", (r) => r.length);
+  const secondProgress = await triage.textContent(".queue-progress");
+  console.log(`after skip: ${secondProgress}, rows ${beforeSkip} → ${afterSkip}`);
+  if (secondProgress === firstProgress) failures.push("space did not advance the queue");
+  if (afterSkip !== beforeSkip) failures.push("skip closed a tab");
+
+  // Saving with no token configured must report and keep the tab.
+  await triage.keyboard.press("s");
+  await triage.waitForSelector(".queue-error:not([hidden])", { timeout: 5000 });
+  const errorText = await triage.textContent(".queue-error");
+  const progressAfterFail = await triage.textContent(".queue-progress");
+  console.log(`save with no token: ${(errorText ?? "").slice(0, 60)}`);
+  if (progressAfterFail !== secondProgress) {
+    failures.push("a failed save advanced the queue, losing the tab");
+  }
+  const afterFail = await triage.$$eval("main .tab-row", (r) => r.length);
+  if (afterFail !== beforeSkip) failures.push("a failed save closed the tab anyway");
+
+  // Escape leaves the queue.
+  await triage.keyboard.press("Escape");
+  await triage.waitForSelector(".queue-card", { state: "detached", timeout: 5000 });
+  console.log("queue closed on escape");
+
   // Closing a tab must not re-cluster. Rebuilding the tree over the remaining
   // tabs rescales the slider and reshuffles the groups, so every close used to
   // silently change the granularity underneath you.

@@ -18,6 +18,27 @@
 placeholder="my-org
 my-username"></textarea>
       </label>
+      <label class="field">
+        <span class="name">Readwise access token</span>
+        <span class="hint">
+          From <a href="https://readwise.io/access_token" target="_blank"
+          rel="noreferrer">readwise.io/access_token</a>. Lets tab triage save a
+          tab straight to Reader and close it. Stored locally, never synced.
+        </span>
+        <input id="readwise" type="password" spellcheck="false"
+          autocomplete="off" placeholder="paste token" />
+      </label>
+
+      <label class="field">
+        <span class="name">Todoist API token</span>
+        <span class="hint">
+          From Todoist Settings → Integrations → Developer. Lets tab triage turn
+          a tab into a task and close it. Stored locally, never synced.
+        </span>
+        <input id="todoist" type="password" spellcheck="false"
+          autocomplete="off" placeholder="paste token" />
+      </label>
+
       <p class="status" id="status" role="status"></p>
     </main>
     <script type="module" src="./main.ts"></script>

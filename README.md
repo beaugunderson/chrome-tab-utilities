@@ -52,6 +52,20 @@ Everything runs locally. The model weights (~25MB) download from the Hugging Fac
 
 The toolbar icon opens a popup listing every action plus live counts for duplicates and windows. A badge on the icon shows the duplicate count across all windows (debounced, only recomputed on URL changes).
 
+## Triage one by one
+
+Clustering collapses the pile but cannot decide for you, and on a real tab set most clusters hold four to nine loosely related tabs — a verdict on the group is often the wrong verdict on its members. "Triage one by one" deals them out one tab at a time, four keys each:
+
+- **s** — save to Readwise Reader and close
+- **t** — add to Todoist and close
+- **x** — close
+- **space** — skip, and it will not come back this session
+- **u** undo, **esc** done
+
+The order comes from the clustering, so tabs about the same thing arrive together and each decision informs the next. A save or task that fails leaves the tab open and says why, rather than closing it and losing it. Undo reopens the last closed tab; anything already sent stays sent.
+
+Saving needs tokens on the options page: a [Readwise access token](https://readwise.io/access_token) and a Todoist API token (Settings → Integrations → Developer). Both are stored locally and never synced.
+
 ## Options
 
 Everything is a hardcoded constant at the top of `entrypoints/background.ts` except the GitHub owners the stale-tab sweep applies to, which are per-user. Set those on the options page ("Options" in the popup, or right-click the toolbar icon → Options): one user or organization per line, stored in `chrome.storage.sync`. Until at least one owner is listed, "Close stale GitHub tabs" opens the options page.

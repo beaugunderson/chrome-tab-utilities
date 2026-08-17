@@ -31,6 +31,8 @@ export default defineConfig({
       "storage",
       "unlimitedStorage",
       "scripting",
+      // Undo in the one-at-a-time queue reopens the tab it just closed.
+      "sessions",
     ],
     host_permissions: [
       "*://github.com/*",
@@ -41,6 +43,9 @@ export default defineConfig({
       // Reads x.com posts as JSON. The page itself exposes nothing per-post to
       // a background tab, and this is one request instead of one page load.
       "https://cdn.syndication.twimg.com/*",
+      // Where a saved tab and a tab-turned-task actually go.
+      "https://readwise.io/*",
+      "https://api.todoist.com/*",
     ],
     // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
     // default extension CSP omits wasm-unsafe-eval, and this is the most

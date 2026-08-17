@@ -776,6 +776,30 @@ try {
     );
   }
 
+  // The preview should dominate the card, and the buttons must stay on screen
+  // — a frame that grows by pushing the actions out of view is worse than a
+  // small one.
+  const layout = await triage.evaluate(() => {
+    const card = document.querySelector(".queue-card");
+    const frame = document.querySelector(".queue-preview");
+    const actions = document.querySelector(".queue-actions");
+    return {
+      card: card.getBoundingClientRect().height,
+      frame: frame.getBoundingClientRect().height,
+      actionsBottom: actions.getBoundingClientRect().bottom,
+      viewport: window.innerHeight,
+    };
+  });
+  const share = Math.round((layout.frame / layout.card) * 100);
+  console.log(
+    `preview fills ${share}% of the card; actions end at ` +
+      `${Math.round(layout.actionsBottom)} of ${layout.viewport}px`,
+  );
+  if (share < 45) failures.push(`preview only fills ${share}% of the card`);
+  if (layout.actionsBottom > layout.viewport) {
+    failures.push("the action buttons are pushed off screen");
+  }
+
   // The page's prose must appear whether or not it can be framed, since
   // plenty of sites refuse framing outright.
   await triage.waitForSelector(".queue-readable:not([hidden])", { timeout: 15000 });

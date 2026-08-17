@@ -40,22 +40,14 @@ export default defineConfig({
       // alone, so it is not a browser-wide hole.
       "declarativeNetRequestWithHostAccess",
     ],
-    host_permissions: [
-      "*://github.com/*",
-      // One-time download of the embedding model on first triage run. Weights
-      // are cached by the browser afterward, so this is never hit again.
-      "https://huggingface.co/*",
-      "https://*.hf.co/*",
-      // Reads x.com posts as JSON. The page itself exposes nothing per-post to
-      // a background tab, and this is one request instead of one page load.
-      "https://cdn.syndication.twimg.com/*",
-      // Where a saved tab and a tab-turned-task actually go.
-      "https://readwise.io/*",
-      "https://api.todoist.com/*",
-      // Needed to preview an arbitrary tab, and no broader than the content
-      // script already running on <all_urls>.
-      "<all_urls>",
-    ],
+    // One entry, because every named host this talks to is a subset of it and
+    // Chrome grants or withholds the whole list together. Previewing and
+    // reading an arbitrary tab is what needs the breadth, and it is no broader
+    // than the content script already running on <all_urls>. What it is spent
+    // on: reading PR state from github.com, the one-time embedding-model
+    // download from huggingface.co and *.hf.co, x.com posts as JSON from
+    // cdn.syndication.twimg.com, and saving to readwise.io and api.todoist.com.
+    host_permissions: ["<all_urls>"],
     // The ONNX runtime backing the embedding model is WebAssembly. Chrome's
     // default extension CSP omits wasm-unsafe-eval, and this is the most
     // permissive policy MV3 allows.

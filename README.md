@@ -69,7 +69,7 @@ Clustering collapses the pile but cannot decide for you, and on a real tab set m
 - **space** — skip, and it will not come back this session
 - **u** undo, **esc** done
 
-Each card shows a live view of the page itself, because a title and a description often are not enough to decide with. Sites that refuse to be framed are made to cooperate by stripping those headers for this one tab while the queue is open, and nowhere else.
+Each card shows the page prose, fetched directly, plus a live view of the page itself, because a title and a description often are not enough to decide with. Sites that refuse to be framed are made to cooperate by stripping those headers for this one tab while the queue is open, and nowhere else.
 
 The order comes from the clustering, so tabs about the same thing arrive together and each decision informs the next. A save or task that fails leaves the tab open and says why, rather than closing it and losing it. Undo reopens the last closed tab; anything already sent stays sent.
 

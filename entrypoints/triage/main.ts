@@ -46,6 +46,7 @@ import {
   fetchVisitCounts,
 } from "../../lib/engagement";
 import { allowFramingInTab, stopAllowingFraming } from "../../lib/framing";
+import { fetchReadableText } from "../../lib/readable";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
 import { type Disposition, type QueueItem, openQueue } from "./queue";
@@ -1964,15 +1965,29 @@ async function startQueue() {
   // for this tab only and only while the queue is open. Best effort: a queue
   // without previews is still a working queue, and this failing silently once
   // stopped the button doing anything at all.
+  let framing = false;
   try {
     const self = await chrome.tabs.getCurrent();
-    if (self?.id !== undefined) await allowFramingInTab(self.id);
+    if (self?.id === undefined) throw new Error("no tab id for this page");
+    await allowFramingInTab(self.id);
+    // Read back rather than assume: the call resolving does not prove a rule
+    // was installed, and a silently absent rule looks exactly like a site
+    // refusing to be framed.
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    framing = rules.some((rule) => rule.condition.tabIds?.includes(self.id!));
+    if (!framing) throw new Error("session rule was not installed");
   } catch (cause) {
     console.warn("preview framing unavailable", cause);
+    setProgress(
+      "Live previews unavailable",
+      null,
+      `Sites that refuse framing will not render. ${cause}`,
+    );
   }
 
   openQueue(items, {
     apply: applyDisposition,
+    readable: (item) => fetchReadableText(item.url),
     async undo(item, disposition) {
       // Whatever was sent has been sent; what can be undone is the closing.
       if (disposition === "skip" || disposition === "visit") return;

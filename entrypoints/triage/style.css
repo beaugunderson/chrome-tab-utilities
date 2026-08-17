@@ -547,3 +547,15 @@ kbd {
   max-height: 94vh;
   overflow-y: auto;
 }
+
+.queue-readable {
+  max-height: 240px;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  overflow-y: auto;
+  background: var(--hover);
+  border-radius: 8px;
+  font: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

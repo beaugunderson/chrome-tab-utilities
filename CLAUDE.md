@@ -126,6 +126,8 @@ pnpm build  # production build
 
 - **The card shows a live iframe of the page.** Title and description are frequently useless for deciding — an essay on self-respect whose only description is the author name — and the decision is usually obvious the moment the page is visible
 - Most sites refuse framing, so `lib/framing.ts` adds a declarativeNetRequest **session** rule stripping `x-frame-options` and `content-security-policy`, scoped by `tabIds` to the triage tab and by `resourceTypes` to `sub_frame`. The rest of the browser keeps its clickjacking protection, and the rule dies with the browser regardless. Removed when the queue closes
+- The card also shows the page prose fetched directly (`lib/readable.ts`), independent of framing, because a live preview fails on any site that refuses to be framed and the decision should not depend on which. Fetched with `credentials: "omit"` — a preview has no business acting as the signed-in user
+- After installing the framing rule the code **reads it back** with `getSessionRules`. The call resolving does not prove a rule exists, and a silently absent rule looks exactly like a site refusing to be framed; when it is missing the queue says so instead of showing dead boxes
 - Requires `<all_urls>` host permission and `declarativeNetRequestWithHostAccess`. No broader than the content script already running on `<all_urls>`
 - Testing the preview needs Playwright frame API, not `contentDocument`: the frame is cross-origin, so `contentDocument` is null whether or not the page loaded, and a test reading it always fails. The fixtures deliberately send `X-Frame-Options: DENY`, so the check only passes if the stripping works
 

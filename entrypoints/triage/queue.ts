@@ -26,6 +26,8 @@ export interface QueueItem {
 export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
 export interface QueueHandlers {
+  /** The page's prose, fetched. Independent of whether it can be framed. */
+  readable?(item: QueueItem): Promise<string | null>;
   /** Returns an error string when the disposition could not be carried out. */
   apply(item: QueueItem, disposition: Disposition): Promise<string | null>;
   /** Bring back whatever the last applied disposition removed. */
@@ -105,6 +107,11 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   previewNote.className = "queue-preview-note";
   previewNote.hidden = true;
 
+  // The page's own words, which work whatever the site's framing policy is.
+  const readable = document.createElement("pre");
+  readable.className = "queue-readable";
+  readable.hidden = true;
+
   const error = document.createElement("p");
   error.className = "queue-error";
   error.hidden = true;
@@ -150,6 +157,7 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     link,
     engagement,
     detail,
+    readable,
     preview,
     previewNote,
     error,
@@ -202,6 +210,17 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     }
     preview.hidden = false;
     preview.src = item.url;
+
+    // Fetched separately, because plenty of sites refuse to be framed at all
+    // and the decision should not depend on which.
+    readable.hidden = true;
+    readable.textContent = "";
+    const wanted = item.url;
+    void handlers.readable?.(item).then((text) => {
+      if (!text || items[index]?.url !== wanted) return;
+      readable.textContent = text;
+      readable.hidden = false;
+    });
   }
 
   async function decide(disposition: Disposition) {

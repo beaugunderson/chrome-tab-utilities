@@ -776,6 +776,15 @@ try {
     );
   }
 
+  // The page's prose must appear whether or not it can be framed, since
+  // plenty of sites refuse framing outright.
+  await triage.waitForSelector(".queue-readable:not([hidden])", { timeout: 15000 });
+  const readableText = (await triage.textContent(".queue-readable")) ?? "";
+  console.log(`readable text: ${JSON.stringify(readableText.slice(0, 60))}`);
+  if (readableText.trim().length < 40) {
+    failures.push("no readable text was fetched for the card");
+  }
+
   // Some things cannot be judged from a preview, so g opens the tab. It must
   // leave the tab open, advance the queue, and focus the tab it names.
   const beforeVisit = await triage.$eval("main .tab-row", (r) => r.length);

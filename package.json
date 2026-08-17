@@ -18,6 +18,7 @@
   "packageManager": "pnpm@10.30.1",
   "devDependencies": {
     "@types/chrome": "^0.1.40",
+    "jsdom": "^30.0.1",
     "playwright": "^1.62.1",
     "typescript": "^6.0.2",
     "vitest": "^4.1.10",

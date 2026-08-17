@@ -753,7 +753,7 @@ try {
   // The card must show the page itself. Title and description are often
   // useless, and every fixture sends X-Frame-Options: DENY, so this only
   // passes if the session rule stripped it.
-  await triage.waitForSelector(".queue-preview:not([hidden])", { timeout: 10000 });
+  await triage.waitForSelector("iframe.queue-preview:not([hidden])", { timeout: 10000 });
   // Read through Playwright's frame API: the preview is cross-origin, so
   // contentDocument is null from the page whether or not it loaded.
   let previewText = null;
@@ -781,7 +781,7 @@ try {
   // small one.
   const layout = await triage.evaluate(() => {
     const card = document.querySelector(".queue-card");
-    const frame = document.querySelector(".queue-preview");
+    const frame = document.querySelector("iframe.queue-preview");
     const actions = document.querySelector(".queue-actions");
     return {
       card: card.getBoundingClientRect().height,
@@ -800,7 +800,7 @@ try {
     failures.push("the action buttons are pushed off screen");
   }
 
-  // The prose stays out of the way until asked for, then appears on r.
+  // The prose stays out of the way until asked for, then appears on e.
   const proseHiddenAtFirst = await triage.isHidden(".queue-readable");
   await triage.waitForFunction(
     () => !document.querySelector(".queue-prose-toggle")?.disabled,
@@ -811,7 +811,7 @@ try {
   await triage.waitForSelector(".queue-readable:not([hidden])", { timeout: 5000 });
   const readableText = (await triage.textContent(".queue-readable")) ?? "";
   console.log(
-    `prose hidden until asked: ${proseHiddenAtFirst}; on r: ` +
+    `prose hidden until asked: ${proseHiddenAtFirst}; on e: ` +
       `${JSON.stringify(readableText.slice(0, 50))}`,
   );
   if (!proseHiddenAtFirst) failures.push("prose was shown without being asked for");

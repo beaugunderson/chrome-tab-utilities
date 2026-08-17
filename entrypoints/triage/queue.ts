@@ -1,3 +1,5 @@
+import type { Preview } from "../../lib/preview";
+
 // One tab at a time, four keys.
 //
 // Clustering collapses 642 tabs into ~120 groups, but more than half of those
@@ -26,8 +28,8 @@ export interface QueueItem {
 export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
 export interface QueueHandlers {
-  /** A framable stand-in for a page that refuses to be framed, if one exists. */
-  embeddable?(url: string): { url: string; note: string } | null;
+  /** A stand-in for a page that refuses to be framed, if one exists. */
+  preview?(url: string): Preview | null;
   /** The page's prose, fetched. Independent of whether it can be framed. */
   readable?(item: QueueItem): Promise<string | null>;
   /** Returns an error string when the disposition could not be carried out. */
@@ -105,6 +107,12 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   preview.setAttribute("referrerpolicy", "no-referrer");
   preview.setAttribute("loading", "eager");
 
+  // For pages whose live view cannot be had at all, a still one. A video's
+  // thumbnail carries as much of the decision as the player would.
+  const previewImage = document.createElement("img");
+  previewImage.className = "queue-preview queue-preview-image";
+  previewImage.hidden = true;
+
   const previewNote = document.createElement("p");
   previewNote.className = "queue-preview-note";
   previewNote.hidden = true;
@@ -177,6 +185,7 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     detail,
     readable,
     preview,
+    previewImage,
     previewNote,
     error,
     actions,
@@ -219,22 +228,35 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
    */
   function showPreview(item: QueueItem) {
     preview.src = "about:blank";
+    preview.hidden = true;
+    previewImage.hidden = true;
+    previewImage.removeAttribute("src");
     previewNote.hidden = true;
     if (!/^https?:/.test(item.url)) {
-      preview.hidden = true;
       previewNote.textContent = "No preview for this kind of page.";
       previewNote.hidden = false;
       return;
     }
-    // Some sites publish an address built to be framed. Using it beats
-    // stripping headers off one that is not, and for a video it means a player
-    // rather than a page.
-    const stand = handlers.embeddable?.(item.url) ?? null;
-    preview.hidden = false;
-    preview.src = stand?.url ?? item.url;
+
+    // Some sites need a stand-in: an address built to be framed, or a still
+    // image where nothing framable exists.
+    const stand = handlers.preview?.(item.url) ?? null;
     if (stand) {
       previewNote.textContent = stand.note;
       previewNote.hidden = false;
+    }
+    if (stand?.kind === "image") {
+      previewImage.hidden = false;
+      previewImage.onerror = stand.fallback
+        ? () => {
+            previewImage.onerror = null;
+            previewImage.src = stand.fallback as string;
+          }
+        : null;
+      previewImage.src = stand.url;
+    } else {
+      preview.hidden = false;
+      preview.src = stand?.url ?? item.url;
     }
 
     // Fetched separately, because plenty of sites refuse to be framed at all

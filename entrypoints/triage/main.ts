@@ -46,7 +46,7 @@ import {
   fetchVisitCounts,
 } from "../../lib/engagement";
 import { allowFramingInTab, stopAllowingFraming } from "../../lib/framing";
-import { embeddableUrl } from "../../lib/embeddable";
+import { previewFor } from "../../lib/preview";
 import { fetchReadableText } from "../../lib/readable";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
@@ -1989,7 +1989,7 @@ async function startQueue() {
   openQueue(items, {
     apply: applyDisposition,
     readable: (item) => fetchReadableText(item.url),
-    embeddable: embeddableUrl,
+    preview: previewFor,
     async undo(item, disposition) {
       // Whatever was sent has been sent; what can be undone is the closing.
       if (disposition === "skip" || disposition === "visit") return;

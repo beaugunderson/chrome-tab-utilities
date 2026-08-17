@@ -580,6 +580,13 @@ kbd {
   border-radius: 8px;
 }
 
+/* A still preview fills the same space, letterboxed rather than stretched. */
+.queue-preview-image {
+  min-height: 0;
+  background: #000;
+  object-fit: contain;
+}
+
 .queue-preview-note {
   margin: 14px 0 0;
   color: var(--muted);

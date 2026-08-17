@@ -26,6 +26,8 @@ export interface QueueItem {
 export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
 export interface QueueHandlers {
+  /** A framable stand-in for a page that refuses to be framed, if one exists. */
+  embeddable?(url: string): { url: string; note: string } | null;
   /** The page's prose, fetched. Independent of whether it can be framed. */
   readable?(item: QueueItem): Promise<string | null>;
   /** Returns an error string when the disposition could not be carried out. */
@@ -36,9 +38,9 @@ export interface QueueHandlers {
 }
 
 const KEYS: Record<string, Disposition> = {
-  s: "save",
+  r: "save",
   t: "task",
-  x: "close",
+  c: "close",
   " ": "skip",
   // Some things cannot be decided from a preview. Going to the tab counts as
   // dealing with it: the queue moves on, and the tab is left open and waiting.
@@ -108,9 +110,17 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   previewNote.hidden = true;
 
   // The page's own words, which work whatever the site's framing policy is.
+  // Kept out of the way until asked for: the preview is the point, and prose
+  // that pushes it down is prose in the wrong place.
   const readable = document.createElement("pre");
   readable.className = "queue-readable";
   readable.hidden = true;
+
+  let proseOpen = false;
+  let proseText: string | null = null;
+  const proseToggle = document.createElement("button");
+  proseToggle.className = "ghost small queue-prose-toggle";
+  proseToggle.addEventListener("click", () => toggleProse());
 
   const error = document.createElement("p");
   error.className = "queue-error";
@@ -150,12 +160,20 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   tally.className = "queue-tally";
   footer.append(tally, undoButton, exitButton);
 
+  // Laid out across rather than down: six stacked lines of chrome were
+  // costing the preview a third of the card for information that reads fine
+  // side by side.
+  const metaRow = document.createElement("div");
+  metaRow.className = "queue-meta";
+  metaRow.append(progress, groupLine, engagement, proseToggle);
+
+  const headingRow = document.createElement("div");
+  headingRow.className = "queue-heading";
+  headingRow.append(title, link);
+
   card.append(
-    progress,
-    groupLine,
-    title,
-    link,
-    engagement,
+    metaRow,
+    headingRow,
     detail,
     readable,
     preview,
@@ -208,19 +226,44 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
       previewNote.hidden = false;
       return;
     }
+    // Some sites publish an address built to be framed. Using it beats
+    // stripping headers off one that is not, and for a video it means a player
+    // rather than a page.
+    const stand = handlers.embeddable?.(item.url) ?? null;
     preview.hidden = false;
-    preview.src = item.url;
+    preview.src = stand?.url ?? item.url;
+    if (stand) {
+      previewNote.textContent = stand.note;
+      previewNote.hidden = false;
+    }
 
     // Fetched separately, because plenty of sites refuse to be framed at all
     // and the decision should not depend on which.
-    readable.hidden = true;
+    proseText = null;
     readable.textContent = "";
+    syncProse();
     const wanted = item.url;
     void handlers.readable?.(item).then((text) => {
-      if (!text || items[index]?.url !== wanted) return;
-      readable.textContent = text;
-      readable.hidden = false;
+      if (items[index]?.url !== wanted) return;
+      proseText = text;
+      readable.textContent = text ?? "";
+      syncProse();
     });
+  }
+
+  /** The toggle stays put between cards, so it is set once and not per tab. */
+  function toggleProse() {
+    proseOpen = !proseOpen;
+    syncProse();
+  }
+
+  function syncProse() {
+    readable.hidden = !proseOpen || !proseText;
+    proseToggle.textContent = proseOpen ? "Hide text (e)" : "Show text (e)";
+    proseToggle.disabled = !proseText;
+    proseToggle.title = proseText
+      ? "Show the page's text"
+      : "No readable text could be fetched for this page";
   }
 
   async function decide(disposition: Disposition) {
@@ -269,6 +312,11 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     if (event.key === "Escape") {
       event.preventDefault();
       close();
+      return;
+    }
+    if (event.key === "e") {
+      event.preventDefault();
+      toggleProse();
       return;
     }
     if (event.key === "u") {

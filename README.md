@@ -62,11 +62,12 @@ Every row and every queue card says which it is ("opened once 44d ago, never ret
 
 Clustering collapses the pile but cannot decide for you, and on a real tab set most clusters hold four to nine loosely related tabs — a verdict on the group is often the wrong verdict on its members. "Triage one by one" deals them out one tab at a time, four keys each:
 
-- **s** — save to Readwise Reader and close
+- **r** — save to Readwise Reader and close
 - **t** — add to Todoist and close
-- **x** — close
+- **c** — close
 - **g** — go to the tab, leaving it open, and move on
 - **space** — skip, and it will not come back this session
+- **e** — show or hide the page text
 - **u** undo, **esc** done
 
 Each card shows the page prose, fetched directly, plus a live view of the page itself, because a title and a description often are not enough to decide with. Sites that refuse to be framed are made to cooperate by stripping those headers for this one tab while the queue is open, and nowhere else.

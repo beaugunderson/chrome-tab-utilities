@@ -800,14 +800,25 @@ try {
     failures.push("the action buttons are pushed off screen");
   }
 
-  // The page's prose must appear whether or not it can be framed, since
-  // plenty of sites refuse framing outright.
-  await triage.waitForSelector(".queue-readable:not([hidden])", { timeout: 15000 });
+  // The prose stays out of the way until asked for, then appears on r.
+  const proseHiddenAtFirst = await triage.isHidden(".queue-readable");
+  await triage.waitForFunction(
+    () => !document.querySelector(".queue-prose-toggle")?.disabled,
+    undefined,
+    { timeout: 15000 },
+  );
+  await triage.keyboard.press("e");
+  await triage.waitForSelector(".queue-readable:not([hidden])", { timeout: 5000 });
   const readableText = (await triage.textContent(".queue-readable")) ?? "";
-  console.log(`readable text: ${JSON.stringify(readableText.slice(0, 60))}`);
+  console.log(
+    `prose hidden until asked: ${proseHiddenAtFirst}; on r: ` +
+      `${JSON.stringify(readableText.slice(0, 50))}`,
+  );
+  if (!proseHiddenAtFirst) failures.push("prose was shown without being asked for");
   if (readableText.trim().length < 40) {
     failures.push("no readable text was fetched for the card");
   }
+  await triage.keyboard.press("e");
 
   // Some things cannot be judged from a preview, so g opens the tab. It must
   // leave the tab open, advance the queue, and focus the tab it names.
@@ -844,7 +855,7 @@ try {
   if (afterSkip !== beforeSkip) failures.push("skip closed a tab");
 
   // Saving with no token configured must report and keep the tab.
-  await triage.keyboard.press("s");
+  await triage.keyboard.press("r");
   await triage.waitForSelector(".queue-error:not([hidden])", { timeout: 5000 });
   const errorText = await triage.textContent(".queue-error");
   const progressAfterFail = await triage.textContent(".queue-progress");

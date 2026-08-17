@@ -455,25 +455,55 @@ button:focus-visible {
   flex: none;
 }
 
+/* One row of chrome, not four. */
+.queue-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
 .queue-progress,
 .queue-group {
+  flex: none;
   color: var(--muted);
   font-size: 11px;
 }
 
 .queue-group {
-  margin-top: 2px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.queue-prose-toggle {
+  margin-left: auto;
+  flex: none;
+}
+
+.queue-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .queue-title {
-  margin: 6px 0 2px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  margin: 4px 0 2px;
   font-size: 17px;
   line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .queue-url {
-  display: block;
+  flex: 1 1 0;
   overflow: hidden;
+  min-width: 0;
   color: var(--muted);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -481,9 +511,10 @@ button:focus-visible {
 }
 
 .queue-detail {
-  margin: 8px 0 0;
+  margin: 2px 0 0;
   max-height: 3em;
   overflow: hidden;
+  color: var(--muted);
   line-height: 1.5;
 }
 
@@ -533,10 +564,10 @@ kbd {
 }
 
 .queue-engagement {
-  margin-top: 10px;
+  flex: none;
   color: var(--accent);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .queue-preview {
@@ -556,7 +587,7 @@ kbd {
 
 
 .queue-readable {
-  max-height: 120px;
+  max-height: 200px;
   margin: 14px 0 0;
   padding: 12px 14px;
   overflow-y: auto;
@@ -565,4 +596,10 @@ kbd {
   font: inherit;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* The note sits under a working preview, so it must not eat the frame. */
+.queue-preview-note {
+  margin: 6px 0 0;
+  font-size: 11px;
 }

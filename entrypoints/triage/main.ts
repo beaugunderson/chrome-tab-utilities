@@ -1945,12 +1945,22 @@ async function applyDisposition(
 
 async function startQueue() {
   const items = queueItems();
-  if (items.length === 0) return;
+  if (items.length === 0) {
+    // Silence here reads as a broken button too.
+    setProgress("Nothing left to triage", null, "Every tab has been dealt with.");
+    return;
+  }
 
   // Let the preview frame load pages that would otherwise refuse to be framed,
-  // for this tab only and only while the queue is open.
-  const self = await chrome.tabs.getCurrent();
-  if (self?.id !== undefined) await allowFramingInTab(self.id);
+  // for this tab only and only while the queue is open. Best effort: a queue
+  // without previews is still a working queue, and this failing silently once
+  // stopped the button doing anything at all.
+  try {
+    const self = await chrome.tabs.getCurrent();
+    if (self?.id !== undefined) await allowFramingInTab(self.id);
+  } catch (cause) {
+    console.warn("preview framing unavailable", cause);
+  }
 
   openQueue(items, {
     apply: applyDisposition,
@@ -2030,7 +2040,14 @@ el("copy-json").addEventListener("click", (e) => {
   );
 });
 
-el("start-queue").addEventListener("click", () => void startQueue());
+el("start-queue").addEventListener("click", () => {
+  // Surfaced rather than swallowed: a button that silently does nothing is
+  // indistinguishable from a broken build.
+  startQueue().catch((cause) => {
+    console.error("could not start the queue", cause);
+    setProgress("Could not start the queue", null, String(cause));
+  });
+});
 
 el("cut").addEventListener("input", scheduleRender);
 el("rescan").addEventListener("click", () => void run());

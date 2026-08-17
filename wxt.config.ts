@@ -33,6 +33,8 @@ export default defineConfig({
       "scripting",
       // Undo in the one-at-a-time queue reopens the tab it just closed.
       "sessions",
+      // Visit counts separate the tabs you actually use from the pile.
+      "history",
     ],
     host_permissions: [
       "*://github.com/*",

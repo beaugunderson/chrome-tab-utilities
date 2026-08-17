@@ -40,6 +40,11 @@ import {
 } from "../../lib/store";
 import { removeTabs } from "../../lib/tabs";
 import { fetchTweet, isWorthReading, tweetIdFromUrl } from "../../lib/tweets";
+import {
+  classifyVisits,
+  describeEngagement,
+  fetchVisitCounts,
+} from "../../lib/engagement";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
 import { type Disposition, type QueueItem, openQueue } from "./queue";
@@ -113,6 +118,8 @@ interface TriageTab {
   tags: string[];
   /** Harvested heading with site boilerplate removed; used for labels. */
   heading?: string;
+  /** Times this URL has been visited, from browsing history. */
+  visits: number;
   vec: Float32Array;
 }
 
@@ -145,6 +152,12 @@ interface State {
    * read, so no content. Kept out of the tree and listed separately.
    */
   unidentified: TriageTab[];
+  /**
+   * Tabs returned to at least once. On a real set these were mail, calendar
+   * and papers being reread — the tools, not the pile. Kept out of the
+   * clustering entirely and never offered for bulk closing.
+   */
+  working: TriageTab[];
   records: Map<string, TabRecord>;
 }
 
@@ -641,10 +654,14 @@ async function run() {
     void pruneStore();
   }
 
+  setProgress("Reading visit history…", null);
+  const visitCounts = await fetchVisitCounts(urls);
+
   setProgress("Clustering…", null);
   const now = Date.now();
   const tabs: TriageTab[] = [];
   const unidentified: TriageTab[] = [];
+  const working: TriageTab[] = [];
   for (let i = 0; i < raw.length; i++) {
     const t = raw[i];
     const record = records.get(urls[i]);
@@ -652,8 +669,17 @@ async function run() {
     // lastAccessed resets on browser restart, so fall back to the snapshot the
     // background keeps per URL, whichever is more recent.
     const lastSeen = Math.max(t.lastAccessed ?? 0, record.seen ?? 0);
-    const bucket = isUnidentified(t.title, urls[i], record) ? unidentified : tabs;
+    const visits = visitCounts.get(urls[i]) ?? 0;
+    // Three piles, in order of how much they need deciding about. A tab you go
+    // back to is a tool; a tab nothing is known about cannot be clustered; the
+    // rest is the pile.
+    const bucket = isUnidentified(t.title, urls[i], record)
+      ? unidentified
+      : classifyVisits(visits).returned
+        ? working
+        : tabs;
     bucket.push({
+      visits,
       id: t.id!,
       windowId: t.windowId!,
       title: bestTitle(t.title, record, urls[i]),
@@ -694,6 +720,7 @@ async function run() {
     collapsed: new Set(),
     removed: new Set(),
     unidentified,
+    working,
     selected: new Set(),
     dupeGroups: groupDuplicates(
       nearDuplicatePairs(
@@ -1053,6 +1080,7 @@ function render() {
         ? `All ${closed} tabs closed. Rescan to start over.`
         : "Nothing to triage.";
     host.replaceChildren(empty);
+    renderWorking();
     renderUnidentified();
     renderDuplicates();
     syncChecks();
@@ -1065,6 +1093,7 @@ function render() {
   );
 
   updateFoldAllLabel();
+  renderWorking();
   renderUnidentified();
   renderDuplicates();
   syncChecks();
@@ -1269,7 +1298,9 @@ function renderTab(tab: TriageTab): HTMLElement {
 
   const idle = document.createElement("span");
   idle.className = "tab-idle";
-  idle.textContent = formatIdle(idleDays(tab));
+  idle.textContent =
+    tab.visits > 1 ? `${tab.visits}× · ${formatIdle(idleDays(tab))}` : formatIdle(idleDays(tab));
+  idle.title = describeEngagement(tab.visits, idleDays(tab));
 
   const close = document.createElement("button");
   close.className = "tab-close";
@@ -1459,6 +1490,40 @@ function hashString(text: string): number {
 }
 
 // ===== Duplicates and selection =====
+
+/**
+ * Tabs you go back to.
+ *
+ * Measured on a real set: of 642 tabs, 94 had any repeat visit at all, and they
+ * were mail, calendar, a paper being reread — the tools. They are listed by how
+ * often they are used, kept out of the clustering, and never offered for bulk
+ * closing, because a topic model has no idea which of your tabs you live in.
+ */
+function renderWorking() {
+  const host = el("working");
+  const live = (state?.working ?? []).filter((t) => !unidentifiedClosed.has(t.id));
+  if (live.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.replaceChildren();
+
+  const heading = document.createElement("h2");
+  heading.textContent = `${live.length} tabs you keep going back to`;
+
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent =
+    "Everything else here was opened once and never revisited. These were not, " +
+    "so they are kept out of the clustering and out of any bulk action — " +
+    "most-used first.";
+
+  host.append(heading, note);
+  for (const tab of [...live].sort((a, b) => b.visits - a.visits)) {
+    host.append(renderTab(tab));
+  }
+}
 
 /**
  * Tabs known only by their address, grouped by host. Nothing here can be
@@ -1829,6 +1894,7 @@ function queueItems(): QueueItem[] {
     favIconUrl: tab.favIconUrl,
     idleDays: Math.round(idleDays(tab)),
     detail: state!.records.get(tab.url)?.meta?.description ?? tab.heading,
+    engagement: describeEngagement(tab.visits, idleDays(tab)),
     group,
   });
 
@@ -1839,6 +1905,11 @@ function queueItems(): QueueItem[] {
   );
   for (const tab of state.unidentified) {
     if (!unidentifiedClosed.has(tab.id)) items.push(toItem(tab, spaceKey(tab)));
+  }
+  // The tabs you go back to come last: they are the ones most likely to be
+  // keeps, and by then the pile in front of them is gone.
+  for (const tab of [...state.working].sort((a, b) => a.visits - b.visits)) {
+    if (!unidentifiedClosed.has(tab.id)) items.push(toItem(tab, "You return to these"));
   }
   return items;
 }

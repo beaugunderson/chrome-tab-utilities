@@ -573,9 +573,17 @@ try {
       ),
     );
 
+  const workingTitles = new Set(
+    await triage.$$eval("#working .tab-title", (n) => n.map((x) => x.textContent ?? "")),
+  );
+  if (workingTitles.size > 0) {
+    console.log(`working set holds ${workingTitles.size} fixtures, excluded from topics`);
+  }
+
   const topicResults = {};
   for (const [name, slugs] of Object.entries(TOPICS)) {
-    const wanted = slugs.map((s) => titleOf.get(s));
+    const wanted = slugs.map((s) => titleOf.get(s)).filter((t) => !workingTitles.has(t));
+    if (wanted.length === 0) continue;
     let bestPosition = null;
     for (const position of [200, 350, 500, 650, 800, 950]) {
       await setCut(position);
@@ -625,7 +633,8 @@ try {
   }
 
   const whole = Object.entries(TOPICS).filter(([, slugs]) => {
-    const wanted = slugs.map((s) => titleOf.get(s));
+    const wanted = slugs.map((s) => titleOf.get(s)).filter((t) => !workingTitles.has(t));
+    if (wanted.length === 0) return false;
     return openingGroups.some((titles) => wanted.every((w) => titles.includes(w)));
   }).length;
   const topicCount = Object.keys(TOPICS).length;
@@ -639,7 +648,7 @@ try {
   // repeats rows, so it is excluded.
   const visibleTabs = () =>
     triage.$$eval(
-      "main .cluster-body .tab-row, main > .tab-row",
+      "main .cluster-body .tab-row, main > .tab-row, #working .tab-row",
       (r) => r.length,
     );
 

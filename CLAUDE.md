@@ -115,6 +115,13 @@ pnpm build  # production build
 
 - Every build stamps `__BUILD_ID__` (wxt.config.ts `define`). The JSON export carries the page's build, and each harvested record carries the build of the content script that answered. **Content scripts do not update in already-open tabs until those tabs navigate**, so a stale one can answer a fresh page and the result is indistinguishable from a broken feature: a whole round was spent on 78 tabs whose records lacked a field the new build sends unconditionally. Compare `build` and `answeredByBuild` before diagnosing anything
 
+## Engagement, not topic
+
+- **The primary split is whether you ever went back to a tab**, from `chrome.history.getVisits` (`lib/engagement.ts`, needs the `history` permission). Measured on a real 642-tab set: 548 (85%) were opened exactly once and never returned to, and the 94 with any repeat visit were mail, calendar and papers being reread — the tools, not the pile
+- Those 94 render in their own section, are excluded from the clustering entirely, and are never offered for bulk closing. A topic model cannot tell which tabs you live in; visit count can
+- Topic clustering does not identify decision-relevant groups on this data, which is the point of the split. Kind does not either: clusters already come out 92% single-kind, and 450 of 642 tabs are simply "a page on the internet". Clustering now earns its place as ordering within the pile, not as the frame
+- `getVisits` is an exact-URL lookup; `history.search` does substring matching and would credit one tab with another visits
+
 ## One-at-a-time queue
 
 - `entrypoints/triage/queue.ts`: one tab, four keys — s Readwise, t Todoist, x close, space skip, u undo, esc done. Decisions are per tab, but the order comes from the clustering, so tabs from one cluster arrive consecutively and the thinking done on the last carries into the next

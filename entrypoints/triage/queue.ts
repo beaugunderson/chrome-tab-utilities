@@ -18,6 +18,8 @@ export interface QueueItem {
   detail?: string;
   /** Cluster this came from, shown to explain why these arrive together. */
   group?: string;
+  /** "opened once 44d ago, never returned" — usually the whole decision. */
+  engagement?: string;
 }
 
 export type Disposition = "save" | "task" | "close" | "skip";
@@ -73,6 +75,9 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   link.target = "_blank";
   link.rel = "noreferrer";
 
+  const engagement = document.createElement("div");
+  engagement.className = "queue-engagement";
+
   const detail = document.createElement("p");
   detail.className = "queue-detail";
 
@@ -114,7 +119,17 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   tally.className = "queue-tally";
   footer.append(tally, undoButton, exitButton);
 
-  card.append(progress, groupLine, title, link, detail, error, actions, footer);
+  card.append(
+    progress,
+    groupLine,
+    title,
+    link,
+    engagement,
+    detail,
+    error,
+    actions,
+    footer,
+  );
   root.append(card);
   document.body.append(root);
   root.focus();
@@ -131,6 +146,8 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     title.textContent = item.title;
     link.textContent = item.url;
     link.href = item.url;
+    engagement.textContent = item.engagement ?? "";
+    engagement.hidden = !item.engagement;
     detail.textContent = item.detail ?? "";
     detail.hidden = !item.detail;
     error.hidden = true;

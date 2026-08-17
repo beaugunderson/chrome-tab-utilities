@@ -52,6 +52,12 @@ Everything runs locally. The model weights (~25MB) download from the Hugging Fac
 
 The toolbar icon opens a popup listing every action plus live counts for duplicates and windows. A badge on the icon shows the duplicate count across all windows (debounced, only recomputed on URL changes).
 
+## What you actually go back to
+
+The page splits first on engagement, not topic. Tabs you have returned to at least once are listed separately, most-used first, kept out of the clustering and out of any bulk action — on a real 642-tab set those were mail, calendar and a paper being reread, and only 94 of 642 qualified. The other 85% were opened exactly once and never revisited; those are the pile the clustering organises.
+
+Every row and every queue card says which it is ("opened once 44d ago, never returned" / "returned 6×, last 3d ago"), because that single line is usually the whole decision.
+
 ## Triage one by one
 
 Clustering collapses the pile but cannot decide for you, and on a real tab set most clusters hold four to nine loosely related tabs — a verdict on the group is often the wrong verdict on its members. "Triage one by one" deals them out one tab at a time, four keys each:

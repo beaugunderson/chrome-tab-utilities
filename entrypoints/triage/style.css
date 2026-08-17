@@ -519,3 +519,10 @@ kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
 }
+
+.queue-engagement {
+  margin-top: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+}

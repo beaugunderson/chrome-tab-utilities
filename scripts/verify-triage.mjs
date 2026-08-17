@@ -776,6 +776,31 @@ try {
     );
   }
 
+  // Some things cannot be judged from a preview, so g opens the tab. It must
+  // leave the tab open, advance the queue, and focus the tab it names.
+  const beforeVisit = await triage.$eval("main .tab-row", (r) => r.length);
+  const visitProgress = await triage.textContent(".queue-progress");
+  const visitTitle = await triage.textContent(".queue-title");
+  await triage.keyboard.press("g");
+  await new Promise((r) => setTimeout(r, 600));
+  const activeTitle = await worker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab?.title ?? null;
+  });
+  await triage.bringToFront();
+  const afterVisit = await triage.$eval("main .tab-row", (r) => r.length);
+  const progressAfterVisit = await triage.textContent(".queue-progress");
+  console.log(`go to tab: focused ${JSON.stringify((activeTitle ?? "").slice(0, 40))}`);
+  if (afterVisit !== beforeVisit) failures.push("go to tab closed the tab");
+  if (progressAfterVisit === visitProgress) {
+    failures.push("go to tab did not advance the queue");
+  }
+  if (activeTitle !== visitTitle) {
+    failures.push(
+      `go to tab focused ${JSON.stringify(activeTitle)}, expected ${JSON.stringify(visitTitle)}`,
+    );
+  }
+
   // Space skips: no tab closed, queue advances.
   const beforeSkip = await triage.$$eval("main .tab-row", (r) => r.length);
   await triage.keyboard.press("Space");

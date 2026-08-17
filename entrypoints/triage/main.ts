@@ -1889,6 +1889,7 @@ function queueItems(): QueueItem[] {
 
   const toItem = (tab: TriageTab, group?: string): QueueItem => ({
     id: tab.id,
+    windowId: tab.windowId,
     title: tab.title,
     url: tab.url,
     host: tab.host,
@@ -1920,6 +1921,14 @@ async function applyDisposition(
   disposition: Disposition,
 ): Promise<string | null> {
   if (disposition === "skip") return null;
+
+  // Going to the tab leaves it open: the point is to look at it properly, and
+  // whatever happens next happens there.
+  if (disposition === "visit") {
+    await chrome.tabs.update(item.id, { active: true });
+    await chrome.windows.update(item.windowId, { focused: true });
+    return null;
+  }
 
   if (disposition !== "close") {
     const tokens = await readTokens();
@@ -1966,7 +1975,7 @@ async function startQueue() {
     apply: applyDisposition,
     async undo(item, disposition) {
       // Whatever was sent has been sent; what can be undone is the closing.
-      if (disposition === "skip") return;
+      if (disposition === "skip" || disposition === "visit") return;
       await chrome.sessions.restore();
       state?.removed.clear();
       unidentifiedClosed.delete(item.id);

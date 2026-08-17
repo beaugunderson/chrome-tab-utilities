@@ -65,6 +65,7 @@ Clustering collapses the pile but cannot decide for you, and on a real tab set m
 - **s** — save to Readwise Reader and close
 - **t** — add to Todoist and close
 - **x** — close
+- **g** — go to the tab, leaving it open, and move on
 - **space** — skip, and it will not come back this session
 - **u** undo, **esc** done
 

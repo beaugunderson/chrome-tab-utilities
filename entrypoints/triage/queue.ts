@@ -16,13 +16,14 @@ export interface QueueItem {
   idleDays: number;
   /** Harvested description or post text, shown so a decision needs no click. */
   detail?: string;
+  windowId: number;
   /** Cluster this came from, shown to explain why these arrive together. */
   group?: string;
   /** "opened once 44d ago, never returned" — usually the whole decision. */
   engagement?: string;
 }
 
-export type Disposition = "save" | "task" | "close" | "skip";
+export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
 export interface QueueHandlers {
   /** Returns an error string when the disposition could not be carried out. */
@@ -37,6 +38,9 @@ const KEYS: Record<string, Disposition> = {
   t: "task",
   x: "close",
   " ": "skip",
+  // Some things cannot be decided from a preview. Going to the tab counts as
+  // dealing with it: the queue moves on, and the tab is left open and waiting.
+  g: "visit",
 };
 
 const LABELS: Record<Disposition, string> = {
@@ -44,12 +48,19 @@ const LABELS: Record<Disposition, string> = {
   task: "Todoist",
   close: "Close",
   skip: "Skip",
+  visit: "Go to tab",
 };
 
 export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
   if (items.length === 0) return;
 
-  const counts: Record<Disposition, number> = { save: 0, task: 0, close: 0, skip: 0 };
+  const counts: Record<Disposition, number> = {
+    save: 0,
+    task: 0,
+    close: 0,
+    skip: 0,
+    visit: 0,
+  };
   const history: Array<{ item: QueueItem; disposition: Disposition }> = [];
   let index = 0;
   let busy = false;
@@ -169,7 +180,7 @@ export function openQueue(items: QueueItem[], handlers: QueueHandlers) {
     error.hidden = true;
     tally.textContent =
       `${counts.save} saved · ${counts.task} tasks · ` +
-      `${counts.close} closed · ${counts.skip} skipped`;
+      `${counts.close} closed · ${counts.skip} skipped · ${counts.visit} opened`;
     undoButton.disabled = history.length === 0;
   }
 

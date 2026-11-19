@@ -1,7 +1,9 @@
 import { parse as parseTld } from "tldts";
 import { type PageMeta, hasMetaContent, isRealTitle } from "../lib/features";
 import { type DiscardPolicy, selectDiscardCandidates } from "../lib/discard";
+import { type PrState, readPrStateInPage } from "../lib/github";
 import { type TabRecord, patchRecord } from "../lib/store";
+import { type SourceGroup, colorForDomain, planGroupMerge } from "../lib/groups";
 import { removeTabs } from "../lib/tabs";
 import { domainKey } from "../lib/url";
 
@@ -404,6 +406,10 @@ async function groupAllTabsByDomain() {
       const existing = existingByTitle.get(key);
       if (existing) {
         touchedGroupIds.add(existing.id);
+        const color = colorForDomain(key);
+        if (existing.color !== color) {
+          await chrome.tabGroups.update(existing.id, { color });
+        }
         if (bucket.ungrouped.length === 0) return;
         try {
           await chrome.tabs.group({
@@ -425,6 +431,7 @@ async function groupAllTabsByDomain() {
       touchedGroupIds.add(groupId);
       await chrome.tabGroups.update(groupId, {
         title: key,
+        color: colorForDomain(key),
         collapsed: AUTO_COLLAPSE,
       });
     }),
@@ -678,22 +685,33 @@ async function mergeAllWindows() {
     await chrome.tabs.move(ids, { windowId: targetWindowId, index: -1 });
   }
 
-  // Move grouped tabs and re-group them in the target window with cloned
-  // metadata. `chrome.tabs.group` with `createProperties.windowId` moves
-  // tabs into the target window as part of grouping.
-  for (const [sourceGid, bucket] of grouped) {
-    const ids = bucket.map((t) => t.tab.id!) as [number, ...number[]];
+  // Move grouped tabs into the target window, one group per title: tabs join
+  // the target's group of that title when it has one, and same-titled source
+  // groups share a single new group. `chrome.tabs.group` moves tabs into the
+  // group's window as part of grouping.
+  const sourceGroups: SourceGroup[] = Array.from(grouped, ([gid, bucket]) => ({
+    ...sourceGroupMeta.get(gid),
+    tabIds: bucket.map((t) => t.tab.id!),
+  }));
+  const plan = planGroupMerge(
+    await chrome.tabGroups.query({ windowId: targetWindowId }),
+    sourceGroups,
+  );
+  for (const join of plan.joins) {
+    await chrome.tabs.group({
+      tabIds: join.tabIds as [number, ...number[]],
+      groupId: join.groupId,
+    });
+  }
+  for (const create of plan.creates) {
     const newGroupId = await chrome.tabs.group({
-      tabIds: ids,
+      tabIds: create.tabIds as [number, ...number[]],
       createProperties: { windowId: targetWindowId },
     });
-    const meta = sourceGroupMeta.get(sourceGid);
-    if (meta) {
-      await chrome.tabGroups.update(newGroupId, {
-        title: meta.title,
-        color: meta.color,
-      });
-    }
+    await chrome.tabGroups.update(newGroupId, {
+      title: create.title,
+      color: create.color,
+    });
   }
 
   // Re-pin tabs that were pinned in their source window. Chrome drops the
@@ -833,13 +851,19 @@ async function groupDomainInWindow(windowId: number, domain: string) {
 
   if (matchingIds.length < MIN_TABS) return;
 
+  // Name the window: without it Chrome creates the group in the focused
+  // window and moves the tabs there.
   const groupId = await chrome.tabs.group({
     tabIds: matchingIds as [number, ...number[]],
+    createProperties: { windowId },
   });
   // Leave the newly-created group expanded — the user just opened a tab that
   // crossed MIN_TABS, so collapsing the group they're actively working in is
   // disruptive. Other groups still get collapsed below per AUTO_COLLAPSE.
-  await chrome.tabGroups.update(groupId, { title: domain });
+  await chrome.tabGroups.update(groupId, {
+    title: domain,
+    color: colorForDomain(domain),
+  });
 
   if (AUTO_COLLAPSE) {
     const others = await chrome.tabGroups.query({ windowId });
@@ -950,7 +974,7 @@ function classifyGithubTab(
 
 interface PrStateResult {
   id: number;
-  state: "open" | "closed" | "unknown";
+  state: PrState;
 }
 
 async function readPrState(tab: chrome.tabs.Tab): Promise<PrStateResult> {
@@ -976,34 +1000,6 @@ async function readPrState(tab: chrome.tabs.Tab): Promise<PrStateResult> {
     // Treat as unknown so we never close a tab we couldn't actually verify.
     return { id: initialId, state: "unknown" };
   }
-}
-
-// Runs in the page context (no closure over extension state). The PR's own
-// header state pill is the first `.State--*` element in document order;
-// timeline cross-reference pills to other issues/PRs come later in the DOM.
-function readPrStateInPage(): "open" | "closed" | "unknown" {
-  const badge = document.querySelector(
-    ".State--open, .State--draft, .State--merged, .State--closed",
-  );
-  if (badge) {
-    if (
-      badge.classList.contains("State--merged") ||
-      badge.classList.contains("State--closed")
-    ) {
-      return "closed";
-    }
-    return "open";
-  }
-  // Hidden header hook used by the classic UI when the visible pill is absent.
-  const header = document.querySelector(
-    ".js-pull-header-details[data-pull-is-open]",
-  );
-  if (header) {
-    return header.getAttribute("data-pull-is-open") === "true"
-      ? "open"
-      : "closed";
-  }
-  return "unknown";
 }
 
 // Resolves with the tab's live id once it's loaded enough to inject into, or

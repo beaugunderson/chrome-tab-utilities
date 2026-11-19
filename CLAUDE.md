@@ -4,7 +4,7 @@ Chrome MV3 extension built with WXT. Keyboard shortcuts for:
 - Copy/paste tab URLs via clipboard
 - Group tabs in the current window by domain (replaces the "Group Tabs By Domain" extension, which serialized API calls per tab and lagged badly at 600+ tabs)
 - Close duplicate tabs across all windows (replaces "Close Duplicate Tabs"; keeps active-or-most-recently-accessed tab, skips pinned, normalizes host case + trailing slash)
-- Merge all windows into the current window (replaces "Merge Windows"; properly re-creates cross-window groups via `chrome.tabs.group({createProperties:{windowId}})` with cloned title/color, awaits moves before restoring pinned state)
+- Merge all windows into the current window (replaces "Merge Windows"; one group per title in the merged window via `planGroupMerge`, awaits moves before restoring pinned state)
 - Split active tab + tabs to right (or just tabs to right) into a new window (replaces "New Window With Tabs To Right"; sorts by `tab.index` for deterministic ordering, re-creates groups, re-pins)
 - Sort tabs in current window by URL or title (replaces "Super Tab Sorter"; groups alphabetized A→Z, `tldts` for SLD extraction, proper `await` throughout where original mixed `await` with callback-form Chrome APIs and raced on running `groupOffset`)
 - Vertical tabs via `chrome.sidePanel` — mirrors the current window's tab order and grouping, click row to activate, × / middle-click to close, click group header to toggle collapsed (state syncs back to Chrome's real tab strip)
@@ -33,6 +33,10 @@ Chrome MV3 extension built with WXT. Keyboard shortcuts for:
 - `tabs.onUpdated` listener auto-groups new/changed tabs with a 200ms per-domain debounce to coalesce rapid tab loads
 - Settings are hardcoded constants at the top of `background.ts` (MIN_TABS=4, IGNORE_PINNED, AUTO_COLLAPSE, MOVE_TO_END)
 - Auto-collapse keeps the active tab's group expanded so it doesn't force a tab switch
+- Every domain group gets the color `colorForDomain` (`lib/groups.ts`) hashes from its name, so GITHUB is the same color in every window; the hotkey sweep also recolors a domain group that has a different one
+- **`chrome.tabs.group` without `groupId` or `createProperties.windowId` creates the group in the focused window and moves the tabs there.** Any call on behalf of a specific window must name it, or tabs loading in a background window are pulled into the one in front
+- Merging windows folds groups by title (`planGroupMerge`): tabs join the target window's group of that title, same-titled source groups share one new group, and untitled groups stay separate
+- **Chrome saves every tab group, and a saved group outlives its tabs**: closing a window or choosing "Close group" keeps it, and it stays in Chrome's "Add tab to group" menu. `chrome.tabGroups` only sees groups in open windows, so the extension cannot list or delete saved ones. They live in `<profile>/Sync Data/LevelDB` under `saved_tab_group-dt-<guid>` keys, one record per group and one per saved tab
 
 ## Build
 
@@ -62,7 +66,8 @@ pnpm build  # production build
 
 - Triggered from the popup ("Close stale GitHub tabs") or the `close-stale-github-tabs` command. Scoped to the owner list in `chrome.storage.sync` under `githubStaleOrgs`, set on the options page and lowercased at read time since GitHub treats the owner path segment case-insensitively. An empty list opens the options page instead of sweeping
 - Closes `/pulls` list pages and `/actions/runs/<id>` workflow-run pages outright; `/pull/<n>` tabs only if the PR is merged or closed
-- PR state is read from the tab's DOM, not the API: `chrome.scripting.executeScript` injects `readPrStateInPage`, which reads the first `.State--*` pill in document order (the header badge; timeline cross-reference pills come later) and falls back to the classic-UI `.js-pull-header-details[data-pull-is-open]` hook. "Merged" and "closed" both map to closeable; anything unverifiable returns `unknown` and is left open
+- PR state is read from the tab's DOM, not the API: `chrome.scripting.executeScript` injects `readPrStateInPage` (`lib/github.ts`, self-contained because it runs in the page), which reads the header's hidden `.js-pull-header-details[data-pull-is-open]` hook and falls back to the header StateLabel's `data-status` (`pullOpened`, `draft`, `pullMerged`, `pullClosed`). "Merged" and "closed" both map to closeable; anything unverifiable returns `unknown` and is left open
+    - **Never read `.State--*` pills.** They belong to timeline cross-references to other issues and PRs: a merged PR referenced by an open one carries `.State--open` and was left open, and an open PR referenced by a merged one would have been closed
 - Discarded PR tabs are reloaded first (via `ensureTabLoaded`) so they have a DOM; a discarded tab is already unloaded so reloading loses no draft. Loaded tabs are read in place and never reloaded. Reloads run through `mapWithConcurrency` (limit 8) to avoid a network storm
 - Requires the `scripting` permission and `*://github.com/*` host permission
 - Reloading a discarded tab can make Chrome replace it with a **new tab id** (`chrome.tabs.onReplaced`). `ensureTabLoaded` tracks the replacement and returns the live id so injection and removal target the right tab, not the dead pre-reload one

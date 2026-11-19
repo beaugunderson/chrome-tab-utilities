@@ -9,15 +9,15 @@ Chrome extension (MV3, built with [WXT](https://wxt.dev/)) with keyboard shortcu
 
 Chrome caps extensions at 4 `suggested_key` bindings per manifest, so the remaining three actions live only in the toolbar popup by default. Bind them manually at `chrome://extensions/shortcuts` if you want keyboard access:
 
-- **Group tabs by domain** — Groups all tabs in the current window by domain (batched, works fast on 600+ tabs). Also auto-groups new tabs as they load once ≥4 share a domain.
+- **Group tabs by domain** — Groups all tabs in the current window by domain (batched, works fast on 600+ tabs). Also auto-groups new tabs as they load once ≥4 share a domain. A domain's group is the same color in every window.
 - **Close duplicate tabs** — Closes duplicates across all windows. Matches by URL (hostname lowercased, trailing slash ignored). Skips pinned tabs; keeps the active tab or the most-recently-accessed duplicate.
-- **Merge all windows** — Merges all normal windows into the current window. Preserves pinned tabs and re-creates tab groups in the target window with the original title and color.
+- **Merge all windows** — Merges all normal windows into the current window. Preserves pinned tabs and keeps one tab group per title: groups that share a title across windows become a single group.
 - **New window with current + tabs to right** — Splits the active tab and every tab to its right off into a fresh window. Preserves pinned state and re-creates tab groups with cloned title/color.
 - **New window with tabs to right** — Same as above but leaves the active tab behind.
 - **Sort tabs by URL / by title** — Reorders tabs in the current window. Groups are alphabetized A→Z; within each group, tabs are sorted by SLD+subdomain+path (URL mode) or title (title mode). Pinned tabs are untouched, ungrouped tabs go at the end.
 - **Show vertical tabs** — Opens a side panel listing every tab in the current window in real tab-strip order, with group headers and colors preserved. Click a row to activate, × (or middle-click) to close, click a group header to collapse/expand (syncs back to Chrome's tab strip).
 - **Close stale GitHub tabs** — Closes, for each GitHub owner listed on the options page: every `/pulls` list page and `/actions/runs/<id>` workflow-run page, plus any `/pull/<n>` tab whose PR is merged or closed. PR state is read directly from each tab's DOM (no API calls), so it's fast even with many tabs. Discarded PR tabs are reloaded first so they have a DOM to read — safe, because a discarded tab is already unloaded and has no draft to lose; loaded tabs are read in place and never reloaded.
-- **Triage tabs by topic** — Opens a full-page view that clusters every tab by meaning rather than by domain, ordered by how much closing each cluster would help. See below.
+- **Triage tabs one at a time** — Opens a full-page view that deals every open tab as a card with a live preview and one-key ways to dispose of it. See below.
 
 Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's native `chrome.tabs.discard`. Pinned tabs, tabs playing audio, and any host starting with `archive.` (archive.org, archive.today, archive.ph, etc.) are exempted, as are tabs with unsaved form input. Discarding pauses while offline so reloads don't fail. A single repeating alarm sweeps all tabs once a minute, so it works at any tab count (Chrome caps an extension at 500 active alarms).
 

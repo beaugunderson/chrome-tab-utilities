@@ -1,6 +1,6 @@
 # Tab Tools
 
-Chrome extension (MV3, built with [WXT](https://wxt.dev/)) with keyboard shortcuts for copying/pasting tab URLs, grouping tabs by domain, closing duplicate tabs, and merging windows. Clicking the toolbar icon opens a menu of the same actions.
+Chrome extension (MV3, built with [WXT](https://wxt.dev/)) with keyboard shortcuts for copying/pasting tab URLs, grouping tabs by domain, closing duplicate tabs, merging and splitting windows, sorting tabs, closing stale GitHub tabs, and triaging every open tab one at a time. Clicking the toolbar icon opens a menu of the same actions.
 
 ## Shortcuts
 

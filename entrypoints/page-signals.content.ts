@@ -2,9 +2,9 @@
 //
 // 1. Track whether the user has typed into a form since the last navigation.
 //    Background pings us before auto-discarding the tab; if dirty, we say skip.
-// 2. Harvest the page metadata the triage page clusters on. A tab's <title> is
-//    often truncated or generic, and this is what lets a pile of news tabs
-//    separate by story rather than by publisher.
+// 2. Harvest the page metadata the triage card shows. A tab's <title> is
+//    often truncated or generic, and this is what lets a card say what the
+//    page is about rather than only which site it is on.
 
 import { type PageMeta, hasMetaContent, isRealTitle } from "../lib/features";
 
@@ -44,8 +44,7 @@ function jsonLdType(): string | undefined {
  * Taking `querySelector("h1")` blindly picks up hidden accessibility and
  * skip-link headings: on a real 794-tab set, 73 pages reported their heading
  * as "Command palette", which is GitHub's hidden dialog title. That is pure
- * noise in both the embedding and the cluster label, and it makes every page
- * on such a site look alike.
+ * noise on the triage card, and it makes every page on such a site look alike.
  */
 function visibleHeading(): string | undefined {
   for (const el of document.querySelectorAll("h1")) {

@@ -10,7 +10,7 @@ Chrome MV3 extension built with WXT. Keyboard shortcuts for:
 - Vertical tabs via `chrome.sidePanel` — mirrors the current window's tab order and grouping, click row to activate, × / middle-click to close, click group header to toggle collapsed (state syncs back to Chrome's real tab strip)
 - Auto-discard inactive tabs via native `chrome.tabs.discard` (replaces "The Great-er Discarder-er"; native discard only, no suspend page, no migration cruft)
 - Close stale GitHub tabs for the GitHub owners configured on the options page (replaces the `close-stale-gh-tabs` bash script; reads PR merged/closed state from each tab's DOM via `chrome.scripting.executeScript` instead of per-PR `gh pr view` calls)
-- Triage tabs one at a time: a full page that deals every open tab as a card with a live preview, four keys to dispose of it, and its place kept in the URL
+- Triage tabs one at a time: a full page that deals every open tab as a card with a live preview, one key per way to dispose of it, and its place kept in the URL
 
 ## Structure
 
@@ -154,5 +154,3 @@ The triage page **is** the queue: opening it prepares every unpinned tab and dea
 - `chrome.alarms` caps an extension at 500 active alarms, so one alarm per tab breaks at scale with an uncaught promise rejection and then silently stops working; the cap is absent from the docs' main flow
 - `chrome.tabs.reload()` on a page that arrived via POST raises Chrome's Confirm Form Resubmission interstitial and hangs the tab; `chrome.tabs.update(id, { url })` re-fetches with a plain GET
 - a `display` rule beats the UA stylesheet's `[hidden] { display: none }`, so `display: flex` on an element that starts hidden leaves it permanently visible
-- transformers.js v4: pointing `env.backends.onnx.wasm.wasmPaths` at a directory switches ONNX Runtime to the *asyncify* variant (`ort-wasm-simd-threaded.asyncify.{mjs,wasm}`), so stage that pair or set explicit per-file paths
-- a feature that both drives and measures the same signal reads back its own writes: the triage harvest reloads every tab, each reload records a history visit, and the "tabs you keep going back to" ranking then counted its own sweeps

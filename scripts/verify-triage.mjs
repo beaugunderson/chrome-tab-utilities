@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chromiumPath } from "./chromium.mjs";
 
 const PORT = 8765;
 
@@ -102,13 +103,7 @@ const extension = join(process.cwd(), ".output", "chrome-mv3");
 // real one. This build loads unpacked extensions headlessly.
 // System Chrome does not: it reports no extensions and never registers the
 // service worker. Point CHROME_FOR_TESTING at another build to override.
-const executablePath =
-  process.env.CHROME_FOR_TESTING ??
-  join(
-    process.env.HOME ?? "",
-    "Library/Caches/ms-playwright/chromium-1224/chrome-mac-arm64",
-    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  );
+const executablePath = chromiumPath();
 
 const context = await chromium.launchPersistentContext(profile, {
   executablePath,
@@ -259,6 +254,36 @@ try {
   console.log(`preview rendered: ${JSON.stringify(previewText)}`);
   if (!previewText) {
     failures.push("the queue preview stayed blank; framing headers are not being stripped");
+  }
+
+  // The header-stripping rule must apply only to frames the triage page loads
+  // itself. A frame nested inside a preview, or anything the tab loads after
+  // navigating to a website, has a website as its initiator and keeps its
+  // framing protection.
+  const scope = await triage.evaluate(async (base) => {
+    const tabId = (await chrome.tabs.getCurrent()).id;
+    const matches = async (initiator) =>
+      (
+        await chrome.declarativeNetRequest.testMatchOutcome({
+          url: `${base}/acct-alpha/one`,
+          type: "sub_frame",
+          tabId,
+          initiator,
+        })
+      ).matchedRules.length > 0;
+    return {
+      fromTriage: await matches(location.origin),
+      fromSite: await matches(base),
+    };
+  }, `http://localhost:${PORT}`);
+  console.log(
+    `framing rule: triage-loaded frame ${scope.fromTriage}, site-loaded frame ${scope.fromSite}`,
+  );
+  if (!scope.fromTriage) {
+    failures.push("the framing rule does not match a frame the triage page loads");
+  }
+  if (scope.fromSite) {
+    failures.push("the framing rule strips headers from frames a website loads in the triage tab");
   }
 
   // A refused preview must be reported rather than left as a grey box, and the

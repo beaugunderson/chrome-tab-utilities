@@ -34,8 +34,12 @@ export async function allowFramingInTab(tabId: number): Promise<void> {
           ],
         },
         condition: {
-          // Scoped to the one tab, and to frames within it.
+          // Scoped to frames the triage page itself loads in its own tab. The
+          // initiator keeps it off frames nested inside a preview, whose
+          // initiator is the previewed site, and off anything the tab loads
+          // after navigating away from the extension.
           tabIds: [tabId],
+          initiatorDomains: [chrome.runtime.id],
           resourceTypes: [
             "sub_frame" as chrome.declarativeNetRequest.ResourceType,
           ],

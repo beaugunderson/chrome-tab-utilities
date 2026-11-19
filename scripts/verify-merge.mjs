@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chromiumPath } from "./chromium.mjs";
 
 const PORT = 8766;
 // What lib/groups.ts colorForDomain gives "LOCALHOST".
@@ -20,13 +21,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
 
-const executablePath =
-  process.env.CHROME_FOR_TESTING ??
-  join(
-    process.env.HOME ?? "",
-    "Library/Caches/ms-playwright/chromium-1224/chrome-mac-arm64",
-    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  );
+const executablePath = chromiumPath();
 const extension = join(import.meta.dirname, "..", ".output", "chrome-mv3");
 const profile = mkdtempSync(join(tmpdir(), "tab-tools-merge-"));
 

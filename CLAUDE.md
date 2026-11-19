@@ -18,13 +18,14 @@ Chrome MV3 extension built with WXT. Keyboard shortcuts for:
 - `entrypoints/background.ts` — command handler, popup message dispatcher, duplicate-tab badge, discard sweep, tab-signal capture
 - `entrypoints/popup/` — toolbar-icon menu (HTML + TS + CSS) that dispatches actions via `chrome.runtime.sendMessage`
 - `entrypoints/sidepanel/` — vertical tabs side panel (HTML + TS + CSS), bound to its host window
-- `entrypoints/triage/` — the triage page (HTML + TS + CSS): prepares the tabs, then hands them to the card queue in `queue.ts`
+- `entrypoints/triage/` — the triage page (HTML + TS + CSS): prepares the tabs, then hands them to the card queue in `queue.ts` or the x.com post list in `posts.ts`
 - `entrypoints/options/` — options page (HTML + TS + CSS); holds the only user-facing setting, the GitHub owner list
 - `entrypoints/page-signals.content.ts` — content script doing two jobs: dirty-form tracking (queried before discarding) and page-metadata harvesting (cached per URL)
 - `entrypoints/offscreen.html` — offscreen document for clipboard API access
 - `public/offscreen.js` — offscreen script (in `public/` to avoid WXT naming conflict with the HTML entrypoint)
-- `lib/` — pure modules with vitest coverage: `order.ts`, `features.ts`, `discard.ts`, `store.ts`, `engagement.ts`, `preview.ts`, `readable.ts`, `tweets.ts`, `tabs.ts`, `url.ts`
+- `lib/` — pure modules with vitest coverage: `order.ts`, `features.ts`, `discard.ts`, `github.ts`, `groups.ts`, `store.ts`, `engagement.ts`, `origin.ts`, `preview.ts`, `readable.ts`, `tweets.ts`, `tabs.ts`, `url.ts`
 - `scripts/verify-triage.mjs` — end-to-end check of the triage page in a real headless Chrome
+- `scripts/verify-merge.mjs` — end-to-end check of merge-all-windows, per-window auto-grouping and domain colors
 
 ## Domain grouping
 
@@ -120,7 +121,28 @@ The triage page **is** the queue: opening it prepares every unpinned tab and dea
 - Readwise is `POST https://readwise.io/api/v3/save/` with `Authorization: Token` (50/min). Todoist is `POST https://api.todoist.com/api/v1/tasks` with `Authorization: Bearer` — **not** `rest/v2`, which is retired and answers 410
 - Tokens live in `chrome.storage.local` (`lib/tokens.ts`), never `sync`: a credential should not be copied to every machine on the profile
 - Undo reopens the closed tab via `chrome.sessions.restore()`. What was already sent to Readwise or Todoist stays sent; undo is about the tab
+    - The restored tab has a **new tab id**, so undo writes it back onto the item; the old id makes the next decision about that tab act on nothing
+- **The card says where the tab was opened from** (`lib/origin.ts`): "from a search for …" when the opener was a results page, otherwise the opener's title and site. Measured on 7,782 stored records: 44% carry an opener, 80% of those openers have a title on record, and every search-results opener carries its query
+    - The opener is mostly not an open tab itself, so its title comes from the store, loaded by opener URL alongside the tabs' own records
 - Idle time is close to useless for ranking on a real set: p25 8 days, median 16, p75 19. Ranking by "closure value" is therefore nearly ranking by size alone
+
+## Post list
+
+- **x.com posts are never cards.** They go to `entrypoints/triage/posts.ts`: every open post in a grid, each drawn by Twitter's own embed with its engagement and origin above it. A card adds only a frame x.com refuses to fill
+- **Each post is `platform.twitter.com/embed/Tweet.html?id=<id>`** (`tweetEmbedUrl`), the page Twitter's widgets script frames: it renders media, quoted posts and link cards as x.com does, and frames from a `chrome-extension://` page. It posts the height it needs to its parent (`twttr.private.resize`), since a cross-origin frame cannot be measured, and `twttr.private.no_results` for a deleted or protected post, where the row falls back to the recorded text or the URL (`parseEmbedMessage`)
+- A click inside an embed moves keyboard focus into its frame, where the page's keys go unheard. The list takes a window `blur` onto one of its frames as choosing that post and refocuses itself
+- **A post's text is read whenever no description is on record** (`postNeedsReading`), whatever else is. A loaded x.com tab can report an og:title ("geoff (@GeoffreyHuntley) on X") and the site's picture without the post's text, so `hasMetaContent` is the wrong gate here: it is true for a post whose text is still unread
+- The page opens on the post list when there are posts, and deciding the last one moves on to the cards for everything else. `p` switches between the two at any point
+- Decisions stay per post, with the card's keys acting on the highlighted row; `j`/`k` or the arrows move it, and a decided row stays visible, dimmed, so undo has something to point at. Passing over a row does not decide it: the cursor comes back to it before the list ends
+- The two views share one tally (`startQueue` in `main.ts`), so switching is never a fresh start. A post decided in the list by any key, skip included, does not come back in that run
+- `?view=cards` in the URL records that the cards were showing while posts were still waiting, so a reload stays on them; without it the page opens on the list
+
+## Testing against a real extension
+
+- Playwright cannot load an unpacked MV3 extension in system Chrome headless (`channel: 'chrome'`, with or without `--headless=new`): `chrome://extensions` lists nothing and no service worker ever registers. Point `executablePath` at a cached `ms-playwright` chromium build instead.
+- Headless Chromium ships no proprietary codecs, so anything media-dependent (a YouTube embed) fails differently than in real Chrome. Verify those in real Chrome rather than trusting a headless repro.
+- `chrome.tabs.discard()` on a Playwright-attached page crashes the whole browser with a stack dump and `Target page, context or browser has been closed`. Assert on the message that triggers a discard instead of the discard itself.
+- Real `chrome.storage.local` state is a LevelDB under `<profile>/Local Extension Settings/<id>`. Copy that directory and read it with `classic-level` to inspect state without a UI export.
 
 ## Notes
 
@@ -129,3 +151,8 @@ The triage page **is** the queue: opening it prepares every unpinned tab and dea
 - WXT treats same-named `.html` and `.ts` files in `entrypoints/` as duplicate entrypoints, hence the `public/` placement
 - Must use `chrome.offscreen` / `chrome.runtime.getContexts` directly (not WXT's `browser.*` polyfill) since these are Chrome-specific APIs
 - Clipboard read uses `document.execCommand("paste")`, not `navigator.clipboard.readText()`, because offscreen documents lack focus
+- `chrome.alarms` caps an extension at 500 active alarms, so one alarm per tab breaks at scale with an uncaught promise rejection and then silently stops working; the cap is absent from the docs' main flow
+- `chrome.tabs.reload()` on a page that arrived via POST raises Chrome's Confirm Form Resubmission interstitial and hangs the tab; `chrome.tabs.update(id, { url })` re-fetches with a plain GET
+- a `display` rule beats the UA stylesheet's `[hidden] { display: none }`, so `display: flex` on an element that starts hidden leaves it permanently visible
+- transformers.js v4: pointing `env.backends.onnx.wasm.wasmPaths` at a directory switches ONNX Runtime to the *asyncify* variant (`ort-wasm-simd-threaded.asyncify.{mjs,wasm}`), so stage that pair or set explicit per-file paths
+- a feature that both drives and measures the same signal reads back its own writes: the triage harvest reloads every tab, each reload records a history visit, and the "tabs you keep going back to" ranking then counted its own sweeps

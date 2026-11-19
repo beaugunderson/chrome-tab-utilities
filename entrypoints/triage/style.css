@@ -193,12 +193,18 @@ button:focus-visible {
   font-size: 11px;
 }
 
-.queue-group {
+.queue-group,
+.queue-origin {
   overflow: hidden;
   min-width: 0;
   flex: 0 1 auto;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.queue-origin {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .queue-prose-toggle {
@@ -320,6 +326,76 @@ kbd {
   font: inherit;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* ===== Post list ===== */
+
+/* Takes the space the preview takes on a card, and scrolls within it. */
+.queue-card > .posts-list {
+  flex: 1;
+  min-height: 0;
+  margin-top: 8px;
+  overflow-y: auto;
+  display: grid;
+  /* Twitter's embed is at most 550px wide and reflows below that. */
+  grid-template-columns: repeat(auto-fill, minmax(360px, 550px));
+  justify-content: center;
+  align-items: start;
+  gap: 8px;
+}
+
+.post-row {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.post-row.current {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.post-row.decided {
+  opacity: 0.45;
+}
+
+.post-byline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 4px 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.post-author {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.post-embed {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  /* Twitter's page sets its own scheme; without this a dark page gives the
+     frame an opaque white backdrop. */
+  color-scheme: light dark;
+}
+
+.post-text {
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.post-outcome {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* The note sits under a working preview, so it must not eat the frame. */

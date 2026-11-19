@@ -116,3 +116,23 @@ describe("the queue preview", () => {
     );
   });
 });
+
+describe("where a tab came from", () => {
+  const origin = () => document.querySelector<HTMLElement>(".queue-origin")!;
+
+  it("shows the origin of a tab that has one", () => {
+    openQueue(
+      [{ ...item("https://fs.blog/one/"), origin: "from a search for “mental models”" }],
+      handlers(),
+    );
+
+    expect(origin().hidden).toBe(false);
+    expect(origin().textContent).toBe("from a search for “mental models”");
+  });
+
+  it("leaves the line out for a tab with no recorded origin", () => {
+    openQueue([item("https://fs.blog/one/")], handlers());
+
+    expect(origin().hidden).toBe(true);
+  });
+});

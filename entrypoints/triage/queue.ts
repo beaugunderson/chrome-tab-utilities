@@ -2,12 +2,12 @@ import type { Preview } from "../../lib/preview";
 
 // One tab at a time, four keys.
 //
-// Clustering collapses 642 tabs into ~120 groups, but more than half of those
-// hold four to nine tabs and are only loosely coherent, so a verdict on the
+// A group of tabs is rarely one decision: on a real 642-tab set, 60 mid-sized
+// groups of four to nine tabs held 54% of everything, and a verdict on such a
 // group is often the wrong verdict on its members. This decides one tab at a
-// time instead, and only borrows from the clustering for ordering: related
-// tabs arrive consecutively, so the context of the last decision carries into
-// the next one.
+// time, in an order that keeps a space together: related tabs arrive
+// consecutively, so the context of the last decision carries into the next
+// one.
 
 export interface QueueItem {
   id: number;
@@ -19,11 +19,36 @@ export interface QueueItem {
   /** Harvested description or post text, shown so a decision needs no click. */
   detail?: string;
   windowId: number;
-  /** Cluster this came from, shown to explain why these arrive together. */
+  /** Space this belongs to, shown to explain why these arrive together. */
   group?: string;
   /** "opened once 44d ago, never returned" — usually the whole decision. */
   engagement?: string;
+  /** "from a search for …" — what the tab was opened for, when recorded. */
+  origin?: string;
+  /** Set for an x.com post: who wrote it, for the post list. */
+  byline?: string;
+  /** The post's photo, for the post list. */
+  image?: string;
 }
+
+export type Counts = Record<Disposition, number>;
+
+export const emptyCounts = (): Counts => ({
+  save: 0,
+  task: 0,
+  close: 0,
+  skip: 0,
+  visit: 0,
+});
+
+/** The other way of going through the tabs, offered from within this one. */
+export interface OtherView {
+  label: string;
+  open(): void;
+}
+
+/** The key that hands over to the other view. */
+export const OTHER_VIEW_KEY = "p";
 
 export type Disposition = "save" | "task" | "close" | "skip" | "visit";
 
@@ -46,10 +71,13 @@ export interface QueueHandlers {
   apply(item: QueueItem, disposition: Disposition): Promise<string | null>;
   /** Bring back whatever the last applied disposition removed. */
   undo(item: QueueItem, disposition: Disposition): Promise<void>;
-  finished(counts: Record<Disposition, number>): void;
+  finished(counts: Counts): void;
+  /** A tally shared with the other view, so switching does not reset it. */
+  counts?: Counts;
+  other?: OtherView;
 }
 
-const KEYS: Record<string, Disposition> = {
+export const KEYS: Record<string, Disposition> = {
   r: "save",
   t: "task",
   c: "close",
@@ -59,7 +87,7 @@ const KEYS: Record<string, Disposition> = {
   g: "visit",
 };
 
-const LABELS: Record<Disposition, string> = {
+export const LABELS: Record<Disposition, string> = {
   save: "Readwise",
   task: "Todoist",
   close: "Close",
@@ -78,13 +106,7 @@ export function openQueue(
 ): QueueHandle {
   if (items.length === 0) return { previewBlocked() {} };
 
-  const counts: Record<Disposition, number> = {
-    save: 0,
-    task: 0,
-    close: 0,
-    skip: 0,
-    visit: 0,
-  };
+  const counts = handlers.counts ?? emptyCounts();
   const history: Array<{ item: QueueItem; disposition: Disposition }> = [];
   let index = Math.min(Math.max(handlers.startAt ?? 0, 0), items.length - 1);
   let busy = false;
@@ -114,6 +136,9 @@ export function openQueue(
 
   const engagement = document.createElement("div");
   engagement.className = "queue-engagement";
+
+  const origin = document.createElement("div");
+  origin.className = "queue-origin";
 
   const detail = document.createElement("p");
   detail.className = "queue-detail";
@@ -186,14 +211,25 @@ export function openQueue(
   exitButton.addEventListener("click", () => close());
   const tally = document.createElement("span");
   tally.className = "queue-tally";
-  footer.append(tally, undoButton, exitButton);
+  footer.append(tally);
+  if (handlers.other) {
+    const otherButton = document.createElement("button");
+    otherButton.className = "ghost small";
+    otherButton.append(
+      Object.assign(document.createElement("kbd"), { textContent: OTHER_VIEW_KEY }),
+      document.createTextNode(` ${handlers.other.label}`),
+    );
+    otherButton.addEventListener("click", () => switchView());
+    footer.append(otherButton);
+  }
+  footer.append(undoButton, exitButton);
 
   // Laid out across rather than down: six stacked lines of chrome were
   // costing the preview a third of the card for information that reads fine
   // side by side.
   const metaRow = document.createElement("div");
   metaRow.className = "queue-meta";
-  metaRow.append(progress, groupLine, engagement, proseToggle);
+  metaRow.append(progress, groupLine, engagement, origin, proseToggle);
 
   const headingRow = document.createElement("div");
   headingRow.className = "queue-heading";
@@ -230,6 +266,8 @@ export function openQueue(
     link.href = item.url;
     engagement.textContent = item.engagement ?? "";
     engagement.hidden = !item.engagement;
+    origin.textContent = item.origin ?? "";
+    origin.hidden = !item.origin;
     detail.textContent = item.detail ?? "";
     detail.hidden = !item.detail;
     showPreview(item);
@@ -372,10 +410,21 @@ export function openQueue(
     render();
   }
 
-  function close() {
+  function dismiss() {
     document.removeEventListener("keydown", onKey, true);
     root.remove();
+  }
+
+  function close() {
+    dismiss();
     handlers.finished(counts);
+  }
+
+  /** Hand over to the other view without ending the run. */
+  function switchView() {
+    if (busy || !handlers.other) return;
+    dismiss();
+    handlers.other.open();
   }
 
   function onKey(event: KeyboardEvent) {
@@ -393,6 +442,11 @@ export function openQueue(
     if (event.key === "u") {
       event.preventDefault();
       void undo();
+      return;
+    }
+    if (event.key === OTHER_VIEW_KEY && handlers.other) {
+      event.preventDefault();
+      switchView();
       return;
     }
     const disposition = KEYS[event.key.toLowerCase()];

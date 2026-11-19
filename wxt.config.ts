@@ -95,7 +95,7 @@ export default defineConfig({
           "Close merged/closed PR tabs, /pulls list pages, and workflow run pages for the configured GitHub owners",
       },
       "triage-tabs": {
-        description: "Open the tab triage page (semantic clusters)",
+        description: "Open the tab triage page (one tab at a time)",
       },
     },
   },

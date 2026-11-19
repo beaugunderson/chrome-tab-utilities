@@ -19,7 +19,12 @@ import {
   saveRecords,
 } from "../../lib/store";
 import { removeTabs } from "../../lib/tabs";
-import { fetchTweet, tweetIdFromUrl } from "../../lib/tweets";
+import {
+  fetchTweet,
+  postNeedsReading,
+  tweetHandleFromUrl,
+  tweetIdFromUrl,
+} from "../../lib/tweets";
 import {
   type Engagement,
   classifyVisits,
@@ -36,8 +41,16 @@ import { type Preview, previewFor } from "../../lib/preview";
 import { fetchReadableText } from "../../lib/readable";
 import { readwiseRequest, send, todoistRequest } from "../../lib/outbox";
 import { readTokens } from "../../lib/tokens";
-import { type Disposition, type QueueItem, openQueue } from "./queue";
+import { openPostList } from "./posts";
+import {
+  type Disposition,
+  type QueueHandle,
+  type QueueItem,
+  emptyCounts,
+  openQueue,
+} from "./queue";
 import { orderTabs, spaceKey, type OrderedTab } from "../../lib/order";
+import { describeOrigin } from "../../lib/origin";
 import { hostOf } from "../../lib/url";
 
 /** Page-metadata requests in flight while backfilling. */
@@ -46,6 +59,9 @@ const META_CONCURRENCY = 16;
 const TWEET_CONCURRENCY = 6;
 /** Which card is showing, kept in the URL so a reload resumes there. */
 const RESUME_PARAM = "tab";
+/** Which view is showing, kept in the URL for the same reason. */
+const VIEW_PARAM = "view";
+const CARDS_VIEW = "cards";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -56,6 +72,8 @@ interface TriageTab extends OrderedTab {
   url: string;
   host: string | null;
   meta?: PageMeta;
+  /** Where the tab was opened from, when that was recorded. */
+  origin?: string;
 }
 
 let records = new Map<string, TabRecord>();
@@ -178,7 +196,7 @@ async function backfillMeta(tabs: chrome.tabs.Tab[]): Promise<number> {
  */
 async function readPosts(tabs: chrome.tabs.Tab[]): Promise<number> {
   const targets = tabs.filter(
-    (t) => tweetIdFromUrl(t.url!) && !hasMetaContent(records.get(t.url!)?.meta),
+    (t) => tweetIdFromUrl(t.url!) && postNeedsReading(records.get(t.url!)?.meta),
   );
   if (targets.length === 0) return 0;
 
@@ -226,6 +244,13 @@ async function run() {
 
   const urls = raw.map((t) => t.url!);
   records = await loadRecords(urls);
+  // The pages these tabs were opened from, which are mostly not open tabs
+  // themselves, so their titles come from the store.
+  const openers = await loadRecords([
+    ...new Set(
+      [...records.values()].flatMap((r) => (r.opener ? [r.opener] : [])),
+    ),
+  ]);
 
   await backfillMeta(raw);
   await readPosts(raw);
@@ -251,6 +276,13 @@ async function run() {
       idleMs: lastSeen > 0 ? now - lastSeen : Number.POSITIVE_INFINITY,
       engagement: engagements.get(url) ?? classifyVisits(0, 0),
       meta: record?.meta,
+      origin: describeOrigin(
+        record?.opener,
+        record?.opener
+          ? bestTitle(undefined, openers.get(record.opener), "")
+          : undefined,
+        url,
+      ),
     };
   });
 
@@ -295,8 +327,19 @@ function toItem(tab: TriageTab, spaceSize: number): QueueItem {
     idleDays: Math.round(idleDays(tab)),
     detail: tab.meta?.description ?? tab.meta?.heading,
     engagement: describeEngagement(tab.engagement, idleDays(tab)),
+    origin: tab.origin,
     group: spaceSize > 1 ? `${tab.space} · ${spaceSize} tabs` : tab.space,
+    ...(tweetIdFromUrl(tab.url) ? { byline: postByline(tab), image: tab.meta?.image } : {}),
   };
+}
+
+/** "Simon Willison @simonw", from what the post lookup stored and the URL. */
+function postByline(tab: TriageTab): string {
+  const handle = tweetHandleFromUrl(tab.url);
+  const name = tab.meta?.siteName?.replace(/ on X$/, "");
+  return [name && name !== "X" ? name : null, handle ? `@${handle}` : null]
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function applyDisposition(
@@ -347,6 +390,14 @@ function rememberPlace(item: QueueItem | null) {
   const url = new URL(location.href);
   if (item) url.searchParams.set(RESUME_PARAM, String(item.id));
   else url.searchParams.delete(RESUME_PARAM);
+  history.replaceState(null, "", url);
+}
+
+/** Posts open as the list unless the URL says the cards were showing. */
+function rememberView(cards: boolean) {
+  const url = new URL(location.href);
+  if (cards) url.searchParams.set(VIEW_PARAM, CARDS_VIEW);
+  else url.searchParams.delete(VIEW_PARAM);
   history.replaceState(null, "", url);
 }
 
@@ -405,24 +456,50 @@ async function startQueue(tabs: TriageTab[]) {
     );
   }
 
-  const queue = openQueue(items, {
-    apply: applyDisposition,
-    readable: (item) => fetchReadableText(item.url),
-    framing,
-    startAt: resumeIndex(items),
-    showing: (item) => rememberPlace(item),
-    // Where nothing framable exists, the page's own picture: og:image for most
-    // sites, and for an x.com post the photo the syndication endpoint returns,
-    // which is the only picture of a post there is.
-    preview: (url, stripsHeaders) =>
-      previewFor(url, stripsHeaders) ?? (stripsHeaders ? null : harvestedStill(url)),
-    async undo(item, disposition) {
-      // Whatever was sent has been sent; what can be undone is the closing.
-      if (disposition === "skip" || disposition === "visit") return;
-      await chrome.sessions.restore();
+  // Two views, each with its own tabs: x.com posts as a list, everything else
+  // as cards. The posts come up first, and deciding the last of them moves on
+  // to the cards. The tally is shared, so switching is never a fresh start.
+  const counts = emptyCounts();
+  const isPost = (item: QueueItem) => tweetIdFromUrl(item.url) !== null;
+  /** Posts decided in the list, however they were decided, so none returns. */
+  const decidedPosts = new Set<QueueItem>();
+  const remainingPosts = () =>
+    items.filter((item) => isPost(item) && !decidedPosts.has(item));
+  /** The queue removes what it deals with itself, so only undecided cards are kept. */
+  let remainingCards = items.filter((item) => !isPost(item));
+  let cards: QueueHandle | undefined;
+
+  const shared = {
+    counts,
+    async apply(item: QueueItem, disposition: Disposition) {
+      const failure = await applyDisposition(item, disposition);
+      if (failure) return failure;
+      if (isPost(item)) decidedPosts.add(item);
+      else if (closesTab(disposition)) {
+        remainingCards = remainingCards.filter((other) => other !== item);
+      }
+      return null;
     },
-    finished(counts) {
+    async undo(item: QueueItem, disposition: Disposition) {
+      decidedPosts.delete(item);
+      // Whatever was sent has been sent; what can be undone is the closing.
+      if (!closesTab(disposition)) return;
+      const session = await chrome.sessions.restore();
+      // The restored tab is a new tab with a new id, and the old one would
+      // make the next decision about it act on nothing.
+      if (session.tab?.id !== undefined) {
+        item.id = session.tab.id;
+        item.windowId = session.tab.windowId;
+      }
+      if (!isPost(item) && !remainingCards.includes(item)) {
+        // Back where it was in the order, not at the end.
+        const kept = new Set(remainingCards).add(item);
+        remainingCards = items.filter((other) => kept.has(other));
+      }
+    },
+    finished() {
       rememberPlace(null);
+      rememberView(false);
       // Nothing here is worth an unhandled rejection: the rule dies with the
       // browser anyway, and it was never installed if framing was unavailable.
       void stopAllowingFraming().catch(() => {});
@@ -433,14 +510,58 @@ async function startQueue(tabs: TriageTab[]) {
           "Rescan to pick up whatever the pile is now.",
       );
     },
-  });
+  };
+
+  function showCards() {
+    const left = remainingCards;
+    if (left.length === 0) {
+      shared.finished();
+      return;
+    }
+    const posts = remainingPosts().length;
+    rememberView(posts > 0);
+    cards = openQueue(left, {
+      ...shared,
+      readable: (item) => fetchReadableText(item.url),
+      framing,
+      startAt: resumeIndex(left),
+      showing: (item) => rememberPlace(item),
+      // Where nothing framable exists, the page's own picture.
+      preview: (url, stripsHeaders) =>
+        previewFor(url, stripsHeaders) ?? (stripsHeaders ? null : harvestedStill(url)),
+      other: posts > 0 ? { label: `Posts (${posts})`, open: showPosts } : undefined,
+    });
+  }
+
+  function showPosts() {
+    cards = undefined;
+    const posts = remainingPosts();
+    if (posts.length === 0) {
+      showCards();
+      return;
+    }
+    rememberView(false);
+    rememberPlace(null);
+    openPostList(posts, {
+      ...shared,
+      other: { label: `Cards (${remainingCards.length})`, open: showCards },
+    });
+  }
+
+  if (new URLSearchParams(location.search).get(VIEW_PARAM) === CARDS_VIEW) showCards();
+  else showPosts();
 
   // A refused frame is indistinguishable from a slow one from inside the page,
   // so the card only knows to show something else if the browser says so.
   unwatch =
     tabId === undefined
       ? undefined
-      : watchBlockedFrames(tabId, (url) => queue.previewBlocked(url));
+      : watchBlockedFrames(tabId, (url) => cards?.previewBlocked(url));
+}
+
+/** Whether a disposition ends with the tab closed. */
+function closesTab(disposition: Disposition): boolean {
+  return disposition === "save" || disposition === "task" || disposition === "close";
 }
 
 function finish(label: string, note: string) {

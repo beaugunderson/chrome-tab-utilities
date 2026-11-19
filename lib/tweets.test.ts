@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isWorthReading, tweetHandleFromUrl, tweetIdFromUrl } from "./tweets";
+import {
+  isWorthReading,
+  parseEmbedMessage,
+  postNeedsReading,
+  tweetEmbedUrl,
+  tweetHandleFromUrl,
+  tweetIdFromUrl,
+} from "./tweets";
 
 describe("tweetIdFromUrl", () => {
   it("reads the id from a status URL", () => {
@@ -70,5 +77,90 @@ describe("isWorthReading", () => {
   it("does not re-offer what already worked", () => {
     expect(isWorthReading(page, "text")).toBe(false);
     expect(isWorthReading(page, "title")).toBe(false);
+  });
+});
+
+describe("postNeedsReading", () => {
+  it("reads a post whose page reported a title but not its text", () => {
+    // What an x.com tab reports before its app renders the post.
+    expect(
+      postNeedsReading({
+        ogTitle: "Mistral AI (@MistralAI) on X",
+        siteName: "X (formerly Twitter)",
+        image: "https://abs.twimg.com/generic.png",
+      }),
+    ).toBe(true);
+  });
+
+  it("reads a post nothing is known about", () => {
+    expect(postNeedsReading(undefined)).toBe(true);
+    expect(postNeedsReading({ siteName: "X (formerly Twitter)" })).toBe(true);
+  });
+
+  it("leaves a post whose text is already on record", () => {
+    expect(postNeedsReading({ description: "the post itself" })).toBe(false);
+  });
+});
+
+describe("tweetEmbedUrl", () => {
+  it("addresses the embed by post id and theme", () => {
+    const url = new URL(tweetEmbedUrl("123", "dark"));
+    expect(url.origin).toBe("https://platform.twitter.com");
+    expect(url.pathname).toBe("/embed/Tweet.html");
+    expect(url.searchParams.get("id")).toBe("123");
+    expect(url.searchParams.get("theme")).toBe("dark");
+  });
+});
+
+describe("parseEmbedMessage", () => {
+  const ORIGIN = "https://platform.twitter.com";
+  const message = (method: string, params: object) => ({
+    "twttr.embed": { jsonrpc: "2.0", method, id: "embed-0", params: [params] },
+  });
+
+  it("reads the height an embed asks for", () => {
+    expect(
+      parseEmbedMessage(
+        ORIGIN,
+        message("twttr.private.resize", {
+          width: 550,
+          height: 696,
+          data: { tweet_id: "123" },
+        }),
+      ),
+    ).toEqual({ id: "123", kind: "resize", height: 696 });
+  });
+
+  it("reads that a post could not be found", () => {
+    expect(
+      parseEmbedMessage(
+        ORIGIN,
+        message("twttr.private.no_results", { data: { tweet_id: "1" } }),
+      ),
+    ).toEqual({ id: "1", kind: "missing" });
+  });
+
+  it("ignores the embed's other messages", () => {
+    expect(
+      parseEmbedMessage(
+        ORIGIN,
+        message("twttr.private.rendered", { data: { tweet_id: "123" } }),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores a message from anywhere else", () => {
+    expect(
+      parseEmbedMessage(
+        "https://example.com",
+        message("twttr.private.resize", { height: 9999, data: { tweet_id: "123" } }),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores anything that is not an embed message", () => {
+    expect(parseEmbedMessage(ORIGIN, "hello")).toBeNull();
+    expect(parseEmbedMessage(ORIGIN, null)).toBeNull();
+    expect(parseEmbedMessage(ORIGIN, { "twttr.embed": {} })).toBeNull();
   });
 });

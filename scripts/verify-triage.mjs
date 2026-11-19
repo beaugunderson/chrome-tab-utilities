@@ -119,6 +119,39 @@ const context = await chromium.launchPersistentContext(profile, {
   ],
 });
 
+// Three posts by three people, so each is a space of its own and the order of
+// the bigger spaces above is left alone. Nothing here reaches x.com: the page
+// is the empty shell x.com really serves, and the post text comes from the
+// syndication endpoint, as it does for real.
+const POSTS = [
+  ["ada", "1001", "Kestrels hover by flying into the wind at exactly its speed."],
+  ["grace", "1002", "A sourdough starter is a pet that you eat."],
+  ["edsger", "1003", "Simplicity is a prerequisite for reliability."],
+];
+await context.route("https://x.com/**", (route) =>
+  route.fulfill({ contentType: "text/html", body: "<!doctype html><title>X</title>" }),
+);
+await context.route("https://cdn.syndication.twimg.com/**", (route) => {
+  const id = new URL(route.request().url()).searchParams.get("id");
+  const found = POSTS.find((p) => p[1] === id);
+  if (!found) return route.fulfill({ status: 404, body: "" });
+  return route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ text: found[2], user: { name: found[0], screen_name: found[0] } }),
+  });
+});
+// Twitter's embed, standing in for the real one: it tells its parent the height
+// it needs, which is the only way a cross-origin frame gets sized.
+const EMBED_HEIGHT = 321;
+await context.route("https://platform.twitter.com/embed/**", (route) => {
+  const id = new URL(route.request().url()).searchParams.get("id");
+  return route.fulfill({
+    contentType: "text/html",
+    body: `<!doctype html><p>embed ${id}</p><script>parent.postMessage({"twttr.embed":{
+      method:"twttr.private.resize",params:[{width:550,height:${EMBED_HEIGHT},data:{tweet_id:"${id}"}}]}},"*")</script>`,
+  });
+});
+
 const failures = [];
 const consoleErrors = [];
 const slugs = [...PAGES.map((p) => p[0]), SPA_PAGE[0]];
@@ -137,6 +170,12 @@ try {
       waitUntil: "domcontentloaded",
     });
   }
+  for (const [handle, id] of POSTS) {
+    const page = await context.newPage();
+    await page.goto(`https://x.com/${handle}/status/${id}`, {
+      waitUntil: "domcontentloaded",
+    });
+  }
   await new Promise((r) => setTimeout(r, SPA_RENDER_MS + 1500));
 
   const triage = await context.newPage();
@@ -145,9 +184,11 @@ try {
   });
   await triage.goto(`chrome-extension://${extensionId}/triage.html`);
 
-  // The page is the queue: opening it deals a card, with no screen in between.
+  // The page is the queue: opening it goes straight to work, with no screen in
+  // between. Posts come first, as a list.
   await triage.waitForSelector(".queue-card", { timeout: 60000 });
   console.log(`stats: ${await triage.textContent("#stats")}`);
+  await checkPostList(triage, context, failures);
 
   // A JS-rendered description is only readable by asking the content script.
   const spaRead = await worker.evaluate(async (slug) => {
@@ -308,6 +349,17 @@ try {
     failures.push("a failed save moved on from the tab it could not save");
   }
 
+  // From the cards, p goes back to whatever posts are still undecided.
+  await triage.keyboard.press("p");
+  await triage.waitForSelector(".posts-list", { timeout: 5000 });
+  const postsLeft = await triage.$$eval(".post-row", (els) => els.length);
+  console.log(`back to the list from the cards: ${postsLeft} posts`);
+  if (postsLeft !== POSTS.length - 1) {
+    failures.push(`the list came back with ${postsLeft} posts, expected ${POSTS.length - 1}`);
+  }
+  await triage.keyboard.press("p");
+  await triage.waitForSelector("iframe.queue-preview", { state: "attached", timeout: 5000 });
+
   // Escape ends the run and says what happened, rather than dealing again.
   await triage.keyboard.press("Escape");
   await triage.waitForSelector(".queue-card", { state: "detached", timeout: 5000 });
@@ -316,6 +368,9 @@ try {
   if (!done?.includes("Done")) failures.push("ending the run reported nothing");
   if (new URL(triage.url()).searchParams.get("tab")) {
     failures.push("the resume parameter outlived the run");
+  }
+  if (new URL(triage.url()).searchParams.get("view")) {
+    failures.push("the view parameter outlived the run");
   }
 } finally {
   await context.close();
@@ -333,3 +388,76 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log("\nall checks passed");
+
+/**
+ * The post list, which is what the page opens on when there are posts.
+ * Leaves the page on the cards, with one post closed.
+ */
+async function checkPostList(triage, context, failures) {
+  await triage.waitForSelector(".posts-list", { timeout: 60000 });
+  const postTexts = await triage.$$eval(".post-text", (els) => els.map((e) => e.textContent));
+  console.log(`post list: ${postTexts.length} rows, first ${JSON.stringify(postTexts[0])}`);
+  if (postTexts.length !== POSTS.length) {
+    failures.push(`expected ${POSTS.length} posts listed, got ${postTexts.length}`);
+  }
+  if (!POSTS.every((p) => postTexts.includes(p[2]))) {
+    failures.push(`the list does not show each post's text: ${JSON.stringify(postTexts)}`);
+  }
+  if (await triage.$("iframe.queue-preview")) {
+    failures.push("the cards were left up behind the post list");
+  }
+
+  // Each post is framed as Twitter's embed and takes the height it reports.
+  await triage
+    .waitForFunction(
+      (height) => {
+        const frames = [...document.querySelectorAll("iframe.post-embed")];
+        return frames.length > 0 && frames.every((f) => f.style.height === `${height}px`);
+      },
+      EMBED_HEIGHT,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+  const embeds = await triage.$$eval("iframe.post-embed", (els) =>
+    els.map((e) => [new URL(e.src).searchParams.get("id"), e.style.height]),
+  );
+  console.log(`post embeds: ${JSON.stringify(embeds)}`);
+  if (
+    embeds.length !== POSTS.length ||
+    !embeds.every(([id, height]) => POSTS.some((p) => p[1] === id) && height === `${EMBED_HEIGHT}px`)
+  ) {
+    failures.push(`posts are not framed as sized embeds: ${JSON.stringify(embeds)}`);
+  }
+
+  // The same keys act on the highlighted row, and closing really closes.
+  const closing = await triage.textContent(".post-row.current .post-text");
+  const closingPost = POSTS.find((p) => p[2] === closing);
+  await triage.keyboard.press("c");
+  await triage.waitForSelector(".post-row.decided", { timeout: 5000 });
+  const postStillOpen = context
+    .pages()
+    .some((p) => p.url().includes(`/status/${closingPost?.[1]}`));
+  console.log(`close from the list: ${postStillOpen ? "STILL OPEN" : "closed"}`);
+  if (postStillOpen) failures.push("closing a post from the list left its tab open");
+
+  // A reload comes back to the list, without the post that is gone.
+  await triage.reload();
+  await triage.waitForSelector(".posts-list", { timeout: 60000 });
+  const afterReload = await triage.$$eval(".post-row", (els) => els.length);
+  console.log(`after reload: ${afterReload} posts listed`);
+  if (afterReload !== POSTS.length - 1) {
+    failures.push(`reload showed ${afterReload} posts, expected ${POSTS.length - 1}`);
+  }
+  if (process.env.POSTS_SCREENSHOT) {
+    await triage.screenshot({ path: process.env.POSTS_SCREENSHOT });
+  }
+
+  // p goes to the cards, and the URL says so, so that a reload stays on them
+  // while posts are still waiting.
+  await triage.keyboard.press("p");
+  await triage.waitForSelector("iframe.queue-preview", { state: "attached", timeout: 5000 });
+  if (await triage.$(".posts-list")) failures.push("the post list stayed up over the cards");
+  if (new URL(triage.url()).searchParams.get("view") !== "cards") {
+    failures.push("the URL does not record that the cards are showing");
+  }
+}

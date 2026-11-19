@@ -25,7 +25,7 @@ Tabs are also auto-discarded after 60 minutes of inactivity using Chrome's nativ
 
 A separate page ("Triage tabs one at a time" in the popup, or the `triage-tabs` command) that deals every open tab as a card and gives you five ways to get rid of it.
 
-Opening the page prepares the tabs and deals the first card straight away. Each card shows a **live view of the page itself** in a frame, the page's own prose fetched directly, its title and description, and one line saying how you have treated it ("opened 44d ago, never came back" / "came back on 6 days, last 3d ago") — usually the whole decision.
+Opening the page prepares the tabs and goes straight to work: the post list if any x.com posts are open, otherwise the first card. Each card shows a **live view of the page itself** in a frame, the page's own prose fetched directly, its title and description, and one line saying how you have treated it ("opened 44d ago, never came back" / "came back on 6 days, last 3d ago") — usually the whole decision. Where it was recorded, the card also says what the tab was opened from: the search that led to it, or the title and site of the page it was opened on.
 
 - **r** — save to Readwise Reader and close
 - **t** — add to Todoist and close
@@ -33,7 +33,10 @@ Opening the page prepares the tabs and deals the first card straight away. Each 
 - **g** — go to the tab, leaving it open, and move on
 - **space** — skip, and it will not come back this session
 - **e** — show or hide the page text
+- **p** — switch between the cards and the post list
 - **u** undo, **esc** done
+
+x.com posts are not dealt as cards. The page opens on the **post list**: every open post at once in a grid, each shown as Twitter's own embed, so it looks as it does on x.com with its media and quoted post. The same keys act on the highlighted row, and **j** / **k** or the arrow keys move it. Deciding the last post moves on to the cards for everything else, and the tally carries over between the two.
 
 Cards arrive grouped by **space**: a site plus its first path segment, so `x.com/simonw` or `github.com/canvas-medical`. The biggest space comes first and arrives whole, longest-untouched first within it, so related tabs land consecutively and the thinking done on one carries into the next. Segments that name a kind of page rather than a place — `status`, `blog`, a date, a numeric id, a long slug — fall back to the bare site. 77 undifferentiated x.com tabs become a list of accounts you can decide about one at a time.
 
@@ -71,7 +74,7 @@ pnpm test       # vitest unit tests for the ordering/discard/preview logic
 pnpm typecheck
 ```
 
-After a build, `node scripts/verify-triage.mjs` runs the triage page end to end: it loads the built extension into a throwaway Chrome profile, opens a set of pages across three spaces, and asserts that the page deals them in space order, that reloading resumes on the same card, that the preview renders despite every fixture sending `X-Frame-Options: DENY`, and that a save with no token fails without closing the tab.
+After a build, `node scripts/verify-triage.mjs` runs the triage page end to end: it loads the built extension into a throwaway Chrome profile, opens a set of pages across three spaces, and asserts that the page deals them in space order, that reloading resumes on the same card, that the preview renders despite every fixture sending `X-Frame-Options: DENY`, that a save with no token fails without closing the tab, and that the page opens on the post list, which shows each post's text, closes a post's tab, and survives a reload.
 
 ## Install from source
 

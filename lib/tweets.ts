@@ -10,7 +10,9 @@
 // and without rendering anything. It is one request instead of one page load,
 // so it is also far cheaper than the harvest it replaces.
 
-const ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result";
+import type { PageMeta } from "./features";
+
+const ENDPOINT ="https://cdn.syndication.twimg.com/tweet-result";
 const TWEET_HOSTS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
 
 export interface Tweet {
@@ -75,6 +77,58 @@ export async function fetchTweet(id: string): Promise<Tweet | null> {
     // Deleted, protected, or the endpoint refused. Nothing to recover.
     return null;
   }
+}
+
+/**
+ * Whether a post's text has yet to be read from the endpoint.
+ *
+ * Asks about the text and nothing else. A loaded x.com tab reports an og:title
+ * ("Mistral AI (@MistralAI) on X") and the site's picture before its app
+ * renders the post, which is metadata without being the post.
+ */
+export function postNeedsReading(meta: PageMeta | undefined): boolean {
+  return !meta?.description?.trim();
+}
+
+const EMBED_ORIGIN = "https://platform.twitter.com";
+
+/**
+ * Twitter's own embed of one post: the page its widgets script frames, which
+ * renders the post as x.com does, media and quoted post included, and frames
+ * from an extension page.
+ */
+export function tweetEmbedUrl(id: string, theme: "dark" | "light"): string {
+  const query = new URLSearchParams({ id, theme, dnt: "true" });
+  return `${EMBED_ORIGIN}/embed/Tweet.html?${query}`;
+}
+
+export type EmbedEvent =
+  | { id: string; kind: "resize"; height: number }
+  | { id: string; kind: "missing" };
+
+/**
+ * What an embed is telling the page framing it. It posts the height it needs,
+ * since a cross-origin frame cannot be measured from outside, and says when
+ * the post is deleted or protected.
+ */
+export function parseEmbedMessage(origin: string, data: unknown): EmbedEvent | null {
+  if (origin !== EMBED_ORIGIN || typeof data !== "object" || data === null) {
+    return null;
+  }
+  const call = (data as Record<string, unknown>)["twttr.embed"] as
+    | {
+        method?: string;
+        params?: Array<{ height?: number; data?: { tweet_id?: string } }>;
+      }
+    | undefined;
+  const param = call?.params?.[0];
+  const id = param?.data?.tweet_id;
+  if (!id) return null;
+  if (call?.method === "twttr.private.resize" && typeof param.height === "number") {
+    return { id, kind: "resize", height: param.height };
+  }
+  if (call?.method === "twttr.private.no_results") return { id, kind: "missing" };
+  return null;
 }
 
 /**

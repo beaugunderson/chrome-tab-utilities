@@ -1112,8 +1112,8 @@ async function sweepDiscardableTabs() {
  * Discarding is the point of no return for metadata: the script goes with the
  * page, and a discarded tab can only be read again by reloading it. On a tab
  * set where nearly everything is discarded, capturing it here is the
- * difference between the triage page clustering on real page text and
- * clustering on titles alone.
+ * difference between a triage card that shows what the page said and one that
+ * shows only its address.
  */
 async function checkBeforeDiscard(tabId: number): Promise<boolean> {
   // The round trip survives SW sleep because the content script lives in the

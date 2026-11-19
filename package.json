@@ -1,7 +1,7 @@
 {
   "name": "chrome-tab-utilities",
   "version": "1.0.0",
-  "description": "Keyboard shortcuts and popup actions for copy/paste tab URLs, group tabs by domain, sort tabs, close duplicate tabs, merge windows, and split tabs into a new window",
+  "description": "Chrome extension for copying and pasting tab URLs, grouping tabs by domain, sorting tabs, closing duplicate and stale GitHub tabs, merging and splitting windows, vertical tabs, auto-discarding idle tabs, and triaging every open tab one at a time",
   "type": "module",
   "scripts": {
     "dev": "wxt",
